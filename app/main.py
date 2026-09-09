@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
+from app.api.router import api_router
 import app.models  # noqa: F401 - ensures models are registered on Base.metadata
 
 
@@ -21,8 +22,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register API routers
+app.include_router(api_router)
+
 
 @app.get("/health", tags=["Health"])
 def health_check() -> dict[str, str]:
     """Health check endpoint to verify system status."""
     return {"status": "ok"}
+
