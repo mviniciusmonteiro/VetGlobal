@@ -15,3 +15,6 @@ __pycache__/
 
 # Local uploads
 uploads/
+
+# Study Readmes
+readmes/

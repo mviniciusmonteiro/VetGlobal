@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
-    # Database
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/vetglobal"
+    # Database (injected via .env or environment variables)
+    DATABASE_URL: str
 
     # Polling
     POLL_TIMEOUT_SECONDS: int = 25
