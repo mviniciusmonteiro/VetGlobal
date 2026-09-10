@@ -7,26 +7,7 @@ from app.models.pet import Pet
 client = TestClient(app)
 
 
-@pytest.fixture
-def tracker():
-    """Fixture to track and clean up pets created during tests."""
-    pet_ids = []
 
-    def _track(pet_id: int):
-        pet_ids.append(pet_id)
-
-    yield _track
-
-    # Cleanup created pets
-    db = SessionLocal()
-    try:
-        for pet_id in pet_ids:
-            pet = db.get(Pet, pet_id)
-            if pet:
-                db.delete(pet)
-        db.commit()
-    finally:
-        db.close()
 
 
 def test_create_pet_success(tracker) -> None:

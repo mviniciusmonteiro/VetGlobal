@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Environment & Secrets
+.env
+.env.test
+.env.local
+
+# Local File Storage
+uploads/
+uploads_test/
+
+# Documentation & Study Guides
+readmes/
+IMPLEMENTATION_PLAN.md
+SYSTEM_DESCRIPTION.md
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp

@@ -10,25 +10,7 @@ from app.models.job import Job
 client = TestClient(app)
 
 
-@pytest.fixture
-def pet_tracker():
-    """Fixture para rastrear e limpar pets criados durante os testes (com cascade delete)."""
-    pet_ids = []
 
-    def _track(pet_id: int):
-        pet_ids.append(pet_id)
-
-    yield _track
-
-    db = SessionLocal()
-    try:
-        for pet_id in pet_ids:
-            pet = db.get(Pet, pet_id)
-            if pet:
-                db.delete(pet)
-        db.commit()
-    finally:
-        db.close()
 
 
 def _create_pet_and_job(pet_tracker, pet_name="Rex") -> tuple[int, int, int]:

@@ -6,14 +6,6 @@ from app.models.document import Document
 from app.models.job import Job
 
 
-@pytest.fixture
-def db_session():
-    """Provides a transactional database session for testing."""
-    session = SessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 def test_database_connection(db_session):

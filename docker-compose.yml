@@ -1,0 +1,83 @@
+services:
+  # ============================================================================
+  # Banco de Dados Relacional — PostgreSQL 16
+  # ============================================================================
+  db:
+    image: postgres:16-alpine
+    container_name: vetglobal-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # API Backend — FastAPI
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vetglobal-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: VetGlobal
+      ENVIRONMENT: development
+      DEBUG: "True"
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/vetglobal
+      POLL_TIMEOUT_SECONDS: 25
+      POLL_INTERVAL_SECONDS: 0.5
+      UPLOAD_DIR: uploads
+    volumes:
+      - ./app:/app/app
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ============================================================================
+  # Test Runner Automatizado (pytest)
+  # Executa toda a suíte de testes contra o banco dedicado vetglobal_test
+  # Uso: docker compose run --rm test
+  # ============================================================================
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vetglobal-test-runner
+    profiles:
+      - test
+    environment:
+      APP_NAME: VetGlobal-Test
+      ENVIRONMENT: test
+      DEBUG: "True"
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/vetglobal_test
+      POLL_TIMEOUT_SECONDS: 2
+      POLL_INTERVAL_SECONDS: 0.1
+      UPLOAD_DIR: uploads_test
+    volumes:
+      - ./app:/app/app
+      - ./tests:/app/tests
+    depends_on:
+      db:
+        condition: service_healthy
+    command: pytest -v
+
+volumes:
+  postgres_data:
+    driver: local
+  uploads_data:
+    driver: local
