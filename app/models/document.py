@@ -55,6 +55,18 @@ class Document(Base):
             return self.jobs[-1].completed_at
         return None
 
+    @property
+    def duration_ms(self) -> Optional[int]:
+        """
+        Retorna a duração total do processamento em milissegundos
+        (completed_at - created_at) do job mais recente associado.
+        """
+        if self.jobs and self.jobs[-1].completed_at and self.jobs[-1].created_at:
+            delta = self.jobs[-1].completed_at - self.jobs[-1].created_at
+            return max(0, int(delta.total_seconds() * 1000))
+        return None
+
     def __repr__(self) -> str:
         return f"<Document(id={self.id}, pet_id={self.pet_id}, filename='{self.filename}', status='{self.status}')>"
+
 

@@ -46,6 +46,11 @@ class DocumentResponse(BaseModel):
         default=None,
         description="Data e hora de conclusão do processamento (métrica de observabilidade)",
     )
+    duration_ms: Optional[int] = Field(
+        default=None,
+        description="Duração total do processamento do job em milissegundos (observabilidade)",
+    )
 
     model_config = ConfigDict(from_attributes=True)
+
 

@@ -224,6 +224,7 @@ def test_get_document_pending(pet_tracker) -> None:
     assert data["error"] is None
     assert data["created_at"] is not None
     assert data["completed_at"] is None
+    assert data["duration_ms"] is None
 
 
 def test_get_document_ready(pet_tracker) -> None:
@@ -258,6 +259,8 @@ def test_get_document_ready(pet_tracker) -> None:
     assert data["error"] is None
     assert data["created_at"] is not None
     assert data["completed_at"] is not None
+    assert data["duration_ms"] is not None
+    assert data["duration_ms"] >= 0
 
 
 def test_get_document_failed(pet_tracker) -> None:
@@ -290,6 +293,9 @@ def test_get_document_failed(pet_tracker) -> None:
     assert data["summary"] is None
     assert data["error"] == error_msg
     assert data["completed_at"] is not None
+    assert data["duration_ms"] is not None
+    assert data["duration_ms"] >= 0
+
 
 
 def test_get_document_not_found() -> None:
