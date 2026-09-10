@@ -1,4 +1,6 @@
+from datetime import datetime
 from enum import Enum
+from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -28,3 +30,22 @@ class DocumentUploadResponse(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentResponse(BaseModel):
+    """Schema de resposta para consulta do estado atual e metadados de um Documento."""
+    id: int = Field(..., description="Identificador único do documento")
+    pet_id: int = Field(..., description="Identificador do pet associado ao documento")
+    filename: str = Field(..., description="Nome original do arquivo enviado")
+    file_size: int = Field(..., description="Tamanho do arquivo em bytes")
+    status: str = Field(..., description="Status atual do documento (PENDING, READY, FAILED)")
+    summary: Optional[str] = Field(default=None, description="Resumo clínico consolidado pelo worker")
+    error: Optional[str] = Field(default=None, description="Mensagem de erro caso o processamento tenha falhado")
+    created_at: Optional[datetime] = Field(default=None, description="Data e hora de envio do documento")
+    completed_at: Optional[datetime] = Field(
+        default=None,
+        description="Data e hora de conclusão do processamento (métrica de observabilidade)",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+

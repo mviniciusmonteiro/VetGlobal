@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.document import DocumentUploadResponse
+from app.schemas.document import DocumentResponse, DocumentUploadResponse
 from app.services import document_service
 from app.services.document_service import (
     EmptyFileError,
@@ -63,3 +63,28 @@ async def upload_pet_document(
         job_id=job.id,
         status=job.status,
     )
+
+
+@router.get(
+    "/documents/{document_id}",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Consultar estado atual e resultado do documento",
+    description=(
+        "Retorna os metadados do documento clínico, seu status atual (PENDING, READY, FAILED), "
+        "o resumo consolidado gerado pelo worker ou a mensagem de erro, além do timestamp de conclusão."
+    ),
+)
+def get_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+) -> DocumentResponse:
+    """Endpoint para consulta de documento pelo seu ID."""
+    doc = document_service.get_document_by_id(db=db, document_id=document_id)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Documento com id {document_id} não encontrado.",
+        )
+    return doc
+

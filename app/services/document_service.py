@@ -1,8 +1,9 @@
 from pathlib import Path
 from typing import Optional, List
 from fastapi import UploadFile
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
+
 
 from app.core.config import settings
 from app.models.pet import Pet
@@ -114,9 +115,16 @@ async def upload_document_for_pet(
 
 def get_document_by_id(db: Session, document_id: int) -> Optional[Document]:
     """
-    Recupera um Document pelo seu ID primário.
+    Recupera um Document pelo seu ID primário, carregando seus jobs
+    associados de forma otimizada para métricas de observabilidade.
     """
-    return db.get(Document, document_id)
+    stmt = (
+        select(Document)
+        .options(selectinload(Document.jobs))
+        .where(Document.id == document_id)
+    )
+    return db.scalar(stmt)
+
 
 
 def list_documents_by_pet(db: Session, pet_id: int) -> List[Document]:

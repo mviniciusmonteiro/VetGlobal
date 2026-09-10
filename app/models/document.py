@@ -45,5 +45,16 @@ class Document(Base):
         order_by="Job.id",
     )
 
+    @property
+    def completed_at(self) -> Optional[datetime]:
+        """
+        Retorna o timestamp de conclusão (completed_at) do job mais recente
+        associado a este documento, para fins de observabilidade.
+        """
+        if self.jobs:
+            return self.jobs[-1].completed_at
+        return None
+
     def __repr__(self) -> str:
         return f"<Document(id={self.id}, pet_id={self.pet_id}, filename='{self.filename}', status='{self.status}')>"
+

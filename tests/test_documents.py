@@ -199,3 +199,102 @@ def test_upload_multiple_documents_same_pet(pet_tracker) -> None:
         assert doc2.filename == "consulta_2.txt"
     finally:
         db.close()
+
+
+def test_get_document_pending(pet_tracker) -> None:
+    """Testa consulta de documento recém-enviado com status PENDING."""
+    pet_id = _create_test_pet(pet_tracker, name="Pipoca", owner="Lucas")
+    file_bytes = b"Relato clinico em observacao."
+    files = {"file": ("prontuario_pendente.txt", io.BytesIO(file_bytes), "text/plain")}
+
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+
+    response = client.get(f"/documents/{doc_id}")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["id"] == doc_id
+    assert data["pet_id"] == pet_id
+    assert data["filename"] == "prontuario_pendente.txt"
+    assert data["file_size"] == len(file_bytes)
+    assert data["status"] == "PENDING"
+    assert data["summary"] is None
+    assert data["error"] is None
+    assert data["created_at"] is not None
+    assert data["completed_at"] is None
+
+
+def test_get_document_ready(pet_tracker) -> None:
+    """Testa consulta de documento concluído com sucesso com status READY e resumo clínico."""
+    pet_id = _create_test_pet(pet_tracker, name="Bob", owner="Mariana")
+    file_bytes = b"Exame laboratoriais de rotina."
+    files = {"file": ("exame_bob.txt", io.BytesIO(file_bytes), "text/plain")}
+
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+    job_id = upload_resp.json()["job_id"]
+
+    # Simular conclusão pelo worker
+    summary_text = "Patient has a history of intermittent vomiting."
+    complete_resp = client.post(
+        f"/internal/jobs/{job_id}/complete",
+        json={"status": "DONE", "summary": summary_text},
+    )
+    assert complete_resp.status_code == 200
+
+    # Consultar documento
+    response = client.get(f"/documents/{doc_id}")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["id"] == doc_id
+    assert data["pet_id"] == pet_id
+    assert data["filename"] == "exame_bob.txt"
+    assert data["status"] == "READY"
+    assert data["summary"] == summary_text
+    assert data["error"] is None
+    assert data["created_at"] is not None
+    assert data["completed_at"] is not None
+
+
+def test_get_document_failed(pet_tracker) -> None:
+    """Testa consulta de documento cujo processamento falhou com status FAILED e erro descritivo."""
+    pet_id = _create_test_pet(pet_tracker, name="Snoopy", owner="Charlie")
+    file_bytes = b"Arquivo corrompido ou ilegivel."
+    files = {"file": ("corrompido.pdf", io.BytesIO(file_bytes), "application/pdf")}
+
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+    job_id = upload_resp.json()["job_id"]
+
+    # Simular falha pelo worker
+    error_msg = "Could not parse document"
+    complete_resp = client.post(
+        f"/internal/jobs/{job_id}/complete",
+        json={"status": "FAILED", "error": error_msg},
+    )
+    assert complete_resp.status_code == 200
+
+    # Consultar documento
+    response = client.get(f"/documents/{doc_id}")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["id"] == doc_id
+    assert data["pet_id"] == pet_id
+    assert data["status"] == "FAILED"
+    assert data["summary"] is None
+    assert data["error"] == error_msg
+    assert data["completed_at"] is not None
+
+
+def test_get_document_not_found() -> None:
+    """Testa consulta de documento inexistente retornando 404 Not Found."""
+    response = client.get("/documents/999999")
+    assert response.status_code == 404
+    assert "não encontrado" in response.json()["detail"].lower()
+
