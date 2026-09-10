@@ -14,8 +14,14 @@ class Settings(BaseSettings):
     POLL_TIMEOUT_SECONDS: int = 25
     POLL_INTERVAL_SECONDS: float = 1.0
 
-    # Uploads
+    # Uploads & Storage
     UPLOAD_DIR: Path = Path("uploads")
+    MAX_FILE_SIZE_MB: int = 10
+    ALLOWED_EXTENSIONS: set[str] = {".txt", ".pdf"}
+
+    @property
+    def MAX_FILE_SIZE_BYTES(self) -> int:
+        return self.MAX_FILE_SIZE_MB * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=".env",

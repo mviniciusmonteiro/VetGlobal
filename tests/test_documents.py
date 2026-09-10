@@ -1,0 +1,201 @@
+import io
+import pytest
+from fastapi.testclient import TestClient
+from app.main import app
+from app.db.session import SessionLocal
+from app.models.pet import Pet
+from app.models.document import Document
+from app.models.job import Job
+
+client = TestClient(app)
+
+
+@pytest.fixture
+def pet_tracker():
+    """Fixture para rastrear e limpar os pets criados durante os testes (com cascade delete)."""
+    pet_ids = []
+
+    def _track(pet_id: int):
+        pet_ids.append(pet_id)
+
+    yield _track
+
+    # Limpeza no banco
+    db = SessionLocal()
+    try:
+        for pet_id in pet_ids:
+            pet = db.get(Pet, pet_id)
+            if pet:
+                db.delete(pet)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _create_test_pet(pet_tracker, name="Bidu", owner="Mauricio") -> int:
+    """Helper para criar um pet de teste via API."""
+    response = client.post("/pets", json={"name": name, "owner_name": owner})
+    assert response.status_code == 201
+    pet_id = response.json()["id"]
+    pet_tracker(pet_id)
+    return pet_id
+
+
+def test_upload_txt_document_success(pet_tracker) -> None:
+    """Testa upload com sucesso de arquivo .txt, verificando HTTP 202 e persistência BYTEA."""
+    pet_id = _create_test_pet(pet_tracker, name="Hank", owner="John Bergeson")
+    file_content = b"Patient has a history of intermittent vomiting and lethargy."
+
+    files = {
+        "file": ("prontuario_hank.txt", io.BytesIO(file_content), "text/plain")
+    }
+
+    response = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert response.status_code == 202
+
+    data = response.json()
+    assert "document_id" in data
+    assert "job_id" in data
+    assert data["status"] == "ENQUEUED"
+
+    doc_id = data["document_id"]
+    job_id = data["job_id"]
+
+    # Verificar integridade e persistência direta no PostgreSQL
+    db = SessionLocal()
+    try:
+        db_doc = db.get(Document, doc_id)
+        assert db_doc is not None
+        assert db_doc.pet_id == pet_id
+        assert db_doc.filename == "prontuario_hank.txt"
+        assert db_doc.file_content == file_content
+        assert db_doc.file_size == len(file_content)
+        assert db_doc.status == "PENDING"
+        assert db_doc.created_at is not None
+
+        db_job = db.get(Job, job_id)
+        assert db_job is not None
+        assert db_job.document_id == doc_id
+        assert db_job.status == "ENQUEUED"
+        assert db_job.created_at is not None
+    finally:
+        db.close()
+
+
+def test_upload_pdf_document_success(pet_tracker) -> None:
+    """Testa upload com sucesso de arquivo .pdf."""
+    pet_id = _create_test_pet(pet_tracker, name="Thor", owner="Carla")
+    pdf_content = b"%PDF-1.4 simulated pdf binary content with lab results"
+
+    files = {
+        "file": ("hemograma_thor.pdf", io.BytesIO(pdf_content), "application/pdf")
+    }
+
+    response = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert response.status_code == 202
+
+    data = response.json()
+    assert data["status"] == "ENQUEUED"
+    assert data["document_id"] > 0
+    assert data["job_id"] > 0
+
+    # Verificar no banco
+    db = SessionLocal()
+    try:
+        db_doc = db.get(Document, data["document_id"])
+        assert db_doc is not None
+        assert db_doc.filename == "hemograma_thor.pdf"
+        assert db_doc.file_content == pdf_content
+        assert db_doc.file_size == len(pdf_content)
+        assert db_doc.status == "PENDING"
+    finally:
+        db.close()
+
+
+def test_upload_unsupported_extensions(pet_tracker) -> None:
+    """Testa rejeição de arquivos com extensões não suportadas com HTTP 415."""
+    pet_id = _create_test_pet(pet_tracker)
+
+    invalid_files = [
+        ("foto.png", b"\x89PNG\r\n\x1a\n", "image/png"),
+        ("dados.csv", b"col1,col2\nval1,val2", "text/csv"),
+        ("laudo.docx", b"PK\x03\x04 fake docx", "application/vnd.openxmlformats-officedocument"),
+        ("virus.exe", b"MZ fake exe", "application/octet-stream"),
+    ]
+
+    for filename, content, mime in invalid_files:
+        files = {"file": (filename, io.BytesIO(content), mime)}
+        response = client.post(f"/pets/{pet_id}/documents", files=files)
+        assert response.status_code == 415
+        assert "não suportado" in response.json()["detail"].lower()
+
+
+def test_upload_pet_not_found() -> None:
+    """Testa upload de documento para pet inexistente retornando 404 Not Found."""
+    files = {
+        "file": ("exame.txt", io.BytesIO(b"conteudo teste"), "text/plain")
+    }
+    response = client.post("/pets/999999/documents", files=files)
+    assert response.status_code == 404
+    assert "não encontrado" in response.json()["detail"].lower()
+
+
+def test_upload_file_too_large(pet_tracker) -> None:
+    """Testa rejeição de arquivo com tamanho superior a 10 MB com HTTP 413."""
+    pet_id = _create_test_pet(pet_tracker)
+
+    # 10 MB + 1 byte
+    oversized_content = b"x" * (10 * 1024 * 1024 + 1)
+    files = {
+        "file": ("gigante.txt", io.BytesIO(oversized_content), "text/plain")
+    }
+
+    response = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert response.status_code == 413
+    assert "excede o limite" in response.json()["detail"].lower()
+
+
+def test_upload_empty_file(pet_tracker) -> None:
+    """Testa envio de arquivo vazio (0 bytes) retornando 422."""
+    pet_id = _create_test_pet(pet_tracker)
+
+    files = {
+        "file": ("vazio.txt", io.BytesIO(b""), "text/plain")
+    }
+
+    response = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert response.status_code == 422
+    assert "vazio" in response.json()["detail"].lower()
+
+
+def test_upload_multiple_documents_same_pet(pet_tracker) -> None:
+    """Testa que múltiplos uploads para o mesmo pet são permitidos e geram registros independentes."""
+    pet_id = _create_test_pet(pet_tracker, name="Mel", owner="Beatriz")
+
+    file1 = {"file": ("consulta_1.txt", io.BytesIO(b"Primeira consulta de rotina."), "text/plain")}
+    file2 = {"file": ("consulta_2.txt", io.BytesIO(b"Retorno com melhora clinica."), "text/plain")}
+
+    resp1 = client.post(f"/pets/{pet_id}/documents", files=file1)
+    resp2 = client.post(f"/pets/{pet_id}/documents", files=file2)
+
+    assert resp1.status_code == 202
+    assert resp2.status_code == 202
+
+    data1 = resp1.json()
+    data2 = resp2.json()
+
+    # Devem ter IDs diferentes
+    assert data1["document_id"] != data2["document_id"]
+    assert data1["job_id"] != data2["job_id"]
+
+    # Ambos pertencem ao mesmo pet no banco
+    db = SessionLocal()
+    try:
+        doc1 = db.get(Document, data1["document_id"])
+        doc2 = db.get(Document, data2["document_id"])
+        assert doc1.pet_id == pet_id
+        assert doc2.pet_id == pet_id
+        assert doc1.filename == "consulta_1.txt"
+        assert doc2.filename == "consulta_2.txt"
+    finally:
+        db.close()

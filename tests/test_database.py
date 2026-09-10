@@ -38,8 +38,10 @@ def test_pet_document_job_lifecycle(db_session):
     doc = Document(
         pet_id=pet.id,
         filename="exame_rex.pdf",
-        file_path="uploads/exame_rex.pdf",
-        status="ENQUEUED",
+        file_content=b"%PDF-1.4 test binary content",
+        file_size=28,
+        content_type="application/pdf",
+        status="PENDING",
     )
     db_session.add(doc)
     db_session.commit()
@@ -47,7 +49,9 @@ def test_pet_document_job_lifecycle(db_session):
 
     assert doc.id is not None
     assert doc.pet_id == pet.id
-    assert doc.status == "ENQUEUED"
+    assert doc.status == "PENDING"
+    assert doc.file_size == 28
+    assert doc.file_content == b"%PDF-1.4 test binary content"
     assert doc.created_at is not None
 
     # 3. Create a Job associated with the Document
