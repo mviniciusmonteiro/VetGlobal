@@ -1,6 +1,12 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+import asyncio
+import time
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.schemas.document import DocumentResponse, DocumentUploadResponse
 from app.services import document_service
@@ -87,4 +93,65 @@ def get_document(
             detail=f"Documento com id {document_id} não encontrado.",
         )
     return doc
+
+
+@router.get(
+    "/documents/{document_id}/poll",
+    response_model=Optional[DocumentResponse],
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_200_OK: {
+            "model": DocumentResponse,
+            "description": "Documento processado com sucesso ou falha finalizada.",
+        },
+        status.HTTP_204_NO_CONTENT: {
+            "description": "Timeout de polling atingido sem conclusão do processamento.",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Documento não encontrado.",
+        },
+    },
+    summary="Aguardar reativamente a conclusão do processamento de um documento (Long Polling)",
+    description=(
+        "Mantém a conexão aberta por até 25 segundos aguardando que o Job associado "
+        "ao documento atinja um estado terminal (DONE ou FAILED) com id >= after_job_id. "
+        "Retorna 200 OK com o documento se concluído, 204 No Content caso o timeout expire, "
+        "ou 404 Not Found caso o documento não exista."
+    ),
+)
+async def poll_document(
+    document_id: int,
+    after_job_id: int = Query(0, ge=0, description="Filtrar por jobs com id maior ou igual a este valor"),
+    db: Session = Depends(get_db),
+):
+    """Endpoint para long polling de documento sem bloquear threads do servidor."""
+    # 1. Validação imediata: se o documento não existir, retorna 404 sem entrar no loop de espera
+    doc = await run_in_threadpool(document_service.get_document_by_id, db=db, document_id=document_id)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Documento com id {document_id} não encontrado.",
+        )
+
+    # 2. Loop de polling não-bloqueante no Event Loop
+    deadline = time.monotonic() + settings.POLL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        completed_doc = await run_in_threadpool(
+            document_service.check_document_completion,
+            db=db,
+            document_id=document_id,
+            after_job_id=after_job_id,
+        )
+        if completed_doc:
+            return completed_doc
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+
+        sleep_duration = min(settings.POLL_INTERVAL_SECONDS, remaining)
+        await asyncio.sleep(sleep_duration)
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 

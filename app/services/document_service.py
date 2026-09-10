@@ -133,3 +133,46 @@ def list_documents_by_pet(db: Session, pet_id: int) -> List[Document]:
     """
     stmt = select(Document).where(Document.pet_id == pet_id).order_by(Document.id)
     return list(db.scalars(stmt).all())
+
+
+def check_document_completion(
+    db: Session,
+    document_id: int,
+    after_job_id: int = 0,
+) -> Optional[Document]:
+    """
+    Verifica se existe algum Job associado ao document_id que satisfaça a condição
+    formal de desbloqueio do Long Polling:
+    job.id >= after_job_id AND job.status IN ("DONE", "FAILED")
+
+    Realiza db.expire_all() para garantir que a sessão SQLAlchemy descarte dados
+    em cache no identity map e enxergue os commits realizados concorrentemente
+    pelo worker em outras transações no PostgreSQL.
+
+    Retorna o Document carregado com seus jobs caso a condição seja satisfeita,
+    ou None caso o processamento continue pendente.
+    """
+    db.expire_all()
+
+    stmt = (
+        select(Job)
+        .where(
+            Job.document_id == document_id,
+            Job.id >= after_job_id,
+            Job.status.in_([JobStatus.DONE.value, JobStatus.FAILED.value]),
+        )
+        .order_by(Job.id.desc())
+        .limit(1)
+    )
+    completed_job = db.scalar(stmt)
+
+    if completed_job:
+        doc_stmt = (
+            select(Document)
+            .options(selectinload(Document.jobs))
+            .where(Document.id == document_id)
+        )
+        return db.scalar(doc_stmt)
+
+    return None
+

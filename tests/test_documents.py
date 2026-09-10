@@ -1,7 +1,10 @@
+import asyncio
 import io
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.pet import Pet
 from app.models.document import Document
@@ -303,4 +306,162 @@ def test_get_document_not_found() -> None:
     response = client.get("/documents/999999")
     assert response.status_code == 404
     assert "não encontrado" in response.json()["detail"].lower()
+
+
+# ==============================================================================
+# Testes da Fase 8: Long Polling e Concorrência (GET /documents/{id}/poll)
+# ==============================================================================
+
+def test_poll_immediate_when_already_done(pet_tracker) -> None:
+    """Testa que o poll retorna 200 OK imediatamente quando o job já estiver finalizado (DONE)."""
+    pet_id = _create_test_pet(pet_tracker, name="Max", owner="Ana")
+    files = {"file": ("prontuario_max.txt", io.BytesIO(b"Historico estavel."), "text/plain")}
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+    job_id = upload_resp.json()["job_id"]
+
+    # Concluir o job previamente
+    complete_resp = client.post(
+        f"/internal/jobs/{job_id}/complete",
+        json={"status": "DONE", "summary": "Paciente saudável."},
+    )
+    assert complete_resp.status_code == 200
+
+    # Chamar poll
+    poll_resp = client.get(f"/documents/{doc_id}/poll?after_job_id={job_id}")
+    assert poll_resp.status_code == 200
+    data = poll_resp.json()
+    assert data["id"] == doc_id
+    assert data["status"] == "READY"
+    assert data["summary"] == "Paciente saudável."
+    assert data["completed_at"] is not None
+    assert data["duration_ms"] is not None
+
+
+@pytest.mark.asyncio
+async def test_poll_concurrent_completion_done(pet_tracker) -> None:
+    """Testa que o poll aguarda reativamente e retorna 200 OK assim que o worker conclui o job com DONE."""
+    pet_id = _create_test_pet(pet_tracker, name="Luna", owner="Felipe")
+    files = {"file": ("exame_luna.txt", io.BytesIO(b"Hemograma em processamento."), "text/plain")}
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+    job_id = upload_resp.json()["job_id"]
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+        async def do_poll():
+            return await async_client.get(f"/documents/{doc_id}/poll?after_job_id={job_id}")
+
+        async def do_complete():
+            await asyncio.sleep(0.2)
+            return await async_client.post(
+                f"/internal/jobs/{job_id}/complete",
+                json={"status": "DONE", "summary": "Hemograma sem alteracoes."},
+            )
+
+        poll_res, complete_res = await asyncio.gather(do_poll(), do_complete())
+
+    assert complete_res.status_code == 200
+    assert poll_res.status_code == 200
+    data = poll_res.json()
+    assert data["id"] == doc_id
+    assert data["status"] == "READY"
+    assert data["summary"] == "Hemograma sem alteracoes."
+    assert data["completed_at"] is not None
+    assert data["duration_ms"] is not None
+
+
+@pytest.mark.asyncio
+async def test_poll_concurrent_completion_failed(pet_tracker) -> None:
+    """Testa que o poll é desbloqueado e retorna 200 OK com erro quando o job falha (FAILED)."""
+    pet_id = _create_test_pet(pet_tracker, name="Toby", owner="Camila")
+    files = {"file": ("falha_toby.pdf", io.BytesIO(b"Dados ilegiveis."), "application/pdf")}
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+    job_id = upload_resp.json()["job_id"]
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+        async def do_poll():
+            return await async_client.get(f"/documents/{doc_id}/poll?after_job_id={job_id}")
+
+        async def do_complete():
+            await asyncio.sleep(0.2)
+            return await async_client.post(
+                f"/internal/jobs/{job_id}/complete",
+                json={"status": "FAILED", "error": "Could not parse document structure."},
+            )
+
+        poll_res, complete_res = await asyncio.gather(do_poll(), do_complete())
+
+    assert complete_res.status_code == 200
+    assert poll_res.status_code == 200
+    data = poll_res.json()
+    assert data["id"] == doc_id
+    assert data["status"] == "FAILED"
+    assert data["error"] == "Could not parse document structure."
+    assert data["summary"] is None
+    assert data["completed_at"] is not None
+
+
+def test_poll_timeout_returns_204(pet_tracker, monkeypatch) -> None:
+    """Testa que o poll retorna 204 No Content quando o timeout expira sem conclusão do job."""
+    monkeypatch.setattr(settings, "POLL_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(settings, "POLL_INTERVAL_SECONDS", 0.1)
+
+    pet_id = _create_test_pet(pet_tracker, name="Fred", owner="Paula")
+    files = {"file": ("pendente_fred.txt", io.BytesIO(b"Aguardando worker lento."), "text/plain")}
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+    job_id = upload_resp.json()["job_id"]
+
+    poll_resp = client.get(f"/documents/{doc_id}/poll?after_job_id={job_id}")
+    assert poll_resp.status_code == 204
+    assert poll_resp.content == b""
+
+
+def test_poll_respects_after_job_id_condition(pet_tracker, monkeypatch) -> None:
+    """Testa que o poll respeita estritamente a condição job.id >= after_job_id."""
+    monkeypatch.setattr(settings, "POLL_TIMEOUT_SECONDS", 0.4)
+    monkeypatch.setattr(settings, "POLL_INTERVAL_SECONDS", 0.1)
+
+    pet_id = _create_test_pet(pet_tracker, name="Simba", owner="Renata")
+    files = {"file": ("laudo_simba.txt", io.BytesIO(b"Resultado ultrassom."), "text/plain")}
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+    job_id = upload_resp.json()["job_id"]
+
+    # Concluir job
+    complete_resp = client.post(
+        f"/internal/jobs/{job_id}/complete",
+        json={"status": "DONE", "summary": "Ultrassom normal."},
+    )
+    assert complete_resp.status_code == 200
+
+    # 1. Com after_job_id maior que o job_id existente -> não deve encontrar e deve dar timeout 204
+    poll_future = client.get(f"/documents/{doc_id}/poll?after_job_id={job_id + 10}")
+    assert poll_future.status_code == 204
+
+    # 2. Com after_job_id == job_id -> satisfaz a condição >= e retorna 200 imediatamente
+    poll_exact = client.get(f"/documents/{doc_id}/poll?after_job_id={job_id}")
+    assert poll_exact.status_code == 200
+    assert poll_exact.json()["status"] == "READY"
+
+    # 3. Com after_job_id default (0) -> satisfaz a condição >= e retorna 200 imediatamente
+    poll_default = client.get(f"/documents/{doc_id}/poll")
+    assert poll_default.status_code == 200
+    assert poll_default.json()["status"] == "READY"
+
+
+def test_poll_document_not_found() -> None:
+    """Testa que o poll para documento inexistente retorna 404 Not Found imediatamente."""
+    response = client.get("/documents/999999/poll")
+    assert response.status_code == 404
+    assert "não encontrado" in response.json()["detail"].lower()
+
 

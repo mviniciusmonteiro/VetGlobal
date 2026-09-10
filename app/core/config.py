@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Polling
     POLL_TIMEOUT_SECONDS: int = 25
-    POLL_INTERVAL_SECONDS: float = 1.0
+    POLL_INTERVAL_SECONDS: float = 0.5
 
     # Uploads & Storage
     UPLOAD_DIR: Path = Path("uploads")
