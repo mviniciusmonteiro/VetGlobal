@@ -1,7 +1,15 @@
-import React, { useState } from 'react';
-import { createPet } from '../services/api';
-import type { Pet } from '../services/api';
-import { PawPrint, PlusCircle, Check, Loader2 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import type { Pet } from '../types';
+import { PetPhotoModal } from './PetPhotoModal';
+import { PetCreateForm } from './PetCreateForm';
+import { PetListItem } from './PetListItem';
+import { 
+  PawPrint, 
+  Plus, 
+  Search, 
+  ChevronLeft, 
+  ChevronRight 
+} from 'lucide-react';
 
 interface PetSectionProps {
   pets: Pet[];
@@ -10,6 +18,14 @@ interface PetSectionProps {
   onPetCreated: (newPet: Pet) => void;
 }
 
+const ITEMS_PER_PAGE = 4;
+
+const PET_AVATARS = [
+  '/gary-bendig-6GMq7AGxNbE-unsplash.jpg',
+  '/hoyoun-lee-oDsLyb_H92k-unsplash.jpg',
+  '/ricky-kharawala-adK3Vu70DEQ-unsplash.jpg',
+];
+
 export const PetSection: React.FC<PetSectionProps> = ({
   pets,
   selectedPetId,
@@ -17,41 +33,58 @@ export const PetSection: React.FC<PetSectionProps> = ({
   onPetCreated,
 }) => {
   const [showNewForm, setShowNewForm] = useState(false);
-  const [name, setName] = useState('');
-  const [ownerName, setOwnerName] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [expandedPet, setExpandedPet] = useState<Pet | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim() || !ownerName.trim()) return;
+  const filteredPets = useMemo(() => {
+    if (!searchTerm.trim()) return pets;
+    const term = searchTerm.toLowerCase();
+    return pets.filter(
+      (p) =>
+        p.name.toLowerCase().includes(term) ||
+        p.owner_name.toLowerCase().includes(term) ||
+        p.id.toString().includes(term)
+    );
+  }, [pets, searchTerm]);
 
-    setLoading(true);
-    setError(null);
-    try {
-      const created = await createPet(name, ownerName);
-      onPetCreated(created);
-      onSelectPet(created.id);
-      setName('');
-      setOwnerName('');
-      setShowNewForm(false);
-    } catch (err: any) {
-      setError(err.message || 'Erro ao cadastrar pet.');
-    } finally {
-      setLoading(false);
-    }
+  const totalPages = Math.max(1, Math.ceil(filteredPets.length / ITEMS_PER_PAGE));
+  const paginatedPets = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredPets.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredPets, currentPage]);
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value);
+    setCurrentPage(1);
+  };
+
+  const handlePetCreated = (newPet: Pet) => {
+    onPetCreated(newPet);
+    onSelectPet(newPet.id);
+    setShowNewForm(false);
+    setCurrentPage(1);
+  };
+
+  const getPetPhotoUrl = (petId: number) => {
+    return PET_AVATARS[Math.abs(petId) % PET_AVATARS.length];
   };
 
   return (
-    <div className="bg-slate-900/75 backdrop-blur-xl border border-white/10 rounded-2xl shadow-xl p-6 transition-all duration-200 hover:border-white/20">
-      <div className="flex justify-between items-center mb-5">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
-            <PawPrint size={20} />
+    <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-xs flex flex-col relative">
+      {/* Cabeçalho do Diretório */}
+      <div className="flex justify-between items-center mb-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-200 shadow-2xs">
+            <PawPrint size={17} />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-white tracking-tight">1. Selecione ou Cadastre o Paciente</h2>
-            <p className="text-xs text-slate-400">Identificação do pet e tutor responsável</p>
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+              Diretório de Pacientes
+            </h2>
+            <p className="text-[11px] text-slate-500">
+              {pets.length} {pets.length === 1 ? 'paciente cadastrado' : 'pacientes cadastrados'}
+            </p>
           </div>
         </div>
 
@@ -59,101 +92,88 @@ export const PetSection: React.FC<PetSectionProps> = ({
           id="btn-toggle-new-pet"
           type="button"
           onClick={() => setShowNewForm(!showNewForm)}
-          className="inline-flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-slate-200 border border-white/15 hover:border-white/30 rounded-xl px-3 py-1.5 text-xs font-medium transition-all cursor-pointer"
+          className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-100/80 text-emerald-900 border border-emerald-200 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
         >
-          <PlusCircle size={14} />
-          {showNewForm ? 'Cancelar' : 'Novo Pet'}
+          <Plus size={13} />
+          {showNewForm ? 'Cancelar' : 'Cadastrar'}
         </button>
       </div>
 
-      {showNewForm && (
-        <form onSubmit={handleSubmit} className="bg-slate-950/60 p-4 rounded-xl border border-white/15 mb-5">
-          <h3 className="text-sm font-semibold mb-3 text-emerald-400">
-            Cadastrar Novo Pet (POST /pets)
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1 font-medium">
-                Nome do Pet *
-              </label>
-              <input
-                id="input-pet-name"
-                type="text"
-                className="w-full bg-slate-900/80 border border-white/15 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all"
-                placeholder="Ex: Hank"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1 font-medium">
-                Nome do Tutor *
-              </label>
-              <input
-                id="input-owner-name"
-                type="text"
-                className="w-full bg-slate-900/80 border border-white/15 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all"
-                placeholder="Ex: John Bergeson"
-                value={ownerName}
-                onChange={(e) => setOwnerName(e.target.value)}
-                required
-              />
-            </div>
+      {/* Formulário Modular de Novo Paciente */}
+      {showNewForm && <PetCreateForm onSuccess={handlePetCreated} />}
+
+      {/* Barra de Pesquisa */}
+      {pets.length > 0 && (
+        <div className="relative mb-2.5">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar por paciente, tutor ou prontuário..."
+            value={searchTerm}
+            onChange={handleSearchChange}
+            className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600/20 transition-all"
+          />
+        </div>
+      )}
+
+      {/* Lista Modular de Pacientes */}
+      <div className="space-y-1.5 flex-1 min-h-[180px]">
+        {filteredPets.length === 0 ? (
+          <div className="text-center py-8 text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg bg-slate-50/50">
+            {pets.length === 0
+              ? 'Nenhum paciente cadastrado no banco de dados.'
+              : 'Nenhum paciente encontrado para esta busca.'}
           </div>
+        ) : (
+          paginatedPets.map((p) => (
+            <PetListItem
+              key={p.id}
+              pet={p}
+              isSelected={selectedPetId === p.id}
+              photoUrl={getPetPhotoUrl(p.id)}
+              onSelect={onSelectPet}
+              onExpandPhoto={setExpandedPet}
+            />
+          ))
+        )}
+      </div>
 
-          {error && (
-            <div className="text-rose-400 text-xs mb-3 font-medium bg-rose-500/10 border border-rose-500/20 p-2 rounded-lg">
-              {error}
-            </div>
-          )}
-
-          <button
-            id="btn-submit-pet"
-            type="submit"
-            disabled={loading}
-            className="w-full inline-flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-semibold py-2 px-4 rounded-xl shadow-lg shadow-emerald-500/20 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-          >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-            Cadastrar Paciente
-          </button>
-        </form>
-      )}
-
-      {pets.length === 0 ? (
-        <div className="text-center py-4 text-slate-400 text-sm">
-          Nenhum pet cadastrado no banco. Cadastre o primeiro acima!
-        </div>
-      ) : (
-        <div className="flex gap-2.5 overflow-x-auto pb-2 scrollbar-thin">
-          {pets.map((p) => {
-            const isSelected = selectedPetId === p.id;
-            return (
-              <button
-                key={p.id}
-                id={`btn-select-pet-${p.id}`}
-                type="button"
-                onClick={() => onSelectPet(p.id)}
-                className={`min-w-[140px] p-3 text-left rounded-xl transition-all cursor-pointer border ${
-                  isSelected
-                    ? 'bg-emerald-500/15 border-emerald-500 shadow-md shadow-emerald-500/15'
-                    : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/10 hover:border-white/20'
-                }`}
-              >
-                <div className={`font-semibold text-sm ${isSelected ? 'text-emerald-400' : 'text-white'}`}>
-                  🐾 {p.name}
-                </div>
-                <div className="text-xs text-slate-400 truncate mt-0.5">
-                  Tutor: {p.owner_name}
-                </div>
-                <div className="text-[11px] text-slate-500 mt-1 font-mono">
-                  ID #{p.id}
-                </div>
-              </button>
-            );
-          })}
+      {/* Paginação */}
+      {filteredPets.length > ITEMS_PER_PAGE && (
+        <div className="flex items-center justify-between pt-3 mt-2 border-t border-slate-100 text-xs text-slate-500">
+          <span className="text-[11px]">
+            Página <strong className="text-slate-800">{currentPage}</strong> de {totalPages} ({filteredPets.length} registros)
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
+              title="Página Anterior"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <button
+              type="button"
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
+              title="Próxima Página"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
         </div>
       )}
+
+      {/* Modal Lightbox de Foto Expandida */}
+      <PetPhotoModal
+        pet={expandedPet}
+        photoUrl={expandedPet ? getPetPhotoUrl(expandedPet.id) : ''}
+        onClose={() => setExpandedPet(null)}
+        onSelectPet={onSelectPet}
+      />
     </div>
   );
 };

@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { uploadDocument } from '../services/api';
-import type { DocumentUploadResult } from '../services/api';
+import type { DocumentUploadResult } from '../types';
 import { UploadCloud, FileText, AlertCircle, Loader2 } from 'lucide-react';
 
 interface DocumentUploadSectionProps {
@@ -26,18 +26,18 @@ export const DocumentUploadSection: React.FC<DocumentUploadSectionProps> = ({
     const hasValidExt = validExtensions.some((ext) => selectedFile.name.toLowerCase().endsWith(ext));
 
     if (!hasValidExt) {
-      setError('Formato inválido. Apenas arquivos .txt e .pdf são aceitos (HTTP 415).');
+      setError('Formato não aceito. Envie um prontuário em formato .pdf ou .txt.');
       return;
     }
 
     const MAX_BYTES = 10 * 1024 * 1024; // 10MB
     if (selectedFile.size > MAX_BYTES) {
-      setError('Arquivo muito grande. O limite máximo permitido é 10 MB (HTTP 413).');
+      setError('Arquivo excede o limite máximo permitido de 10 MB.');
       return;
     }
 
     if (selectedFile.size === 0) {
-      setError('O arquivo enviado está vazio (HTTP 422).');
+      setError('O arquivo selecionado está vazio. Escolha um documento com conteúdo válido.');
       return;
     }
 
@@ -69,11 +69,11 @@ export const DocumentUploadSection: React.FC<DocumentUploadSectionProps> = ({
 
   const handleUpload = async () => {
     if (!selectedPetId) {
-      setError('Por favor, selecione um paciente no passo 1.');
+      setError('Selecione ou cadastre um paciente antes de enviar o prontuário.');
       return;
     }
     if (!file) {
-      setError('Selecione um arquivo para upload.');
+      setError('Selecione um arquivo .pdf ou .txt para iniciar a análise.');
       return;
     }
 
@@ -85,24 +85,24 @@ export const DocumentUploadSection: React.FC<DocumentUploadSectionProps> = ({
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err: any) {
-      setError(err.message || 'Erro ao realizar upload do documento.');
+      setError(err.message || 'Falha na transmissão do prontuário para processamento.');
     } finally {
       setUploading(false);
     }
   };
 
   return (
-    <div className="bg-slate-900/75 backdrop-blur-xl border border-white/10 rounded-2xl shadow-xl p-6 transition-all duration-200 hover:border-white/20">
-      <div className="flex items-center gap-3 mb-5">
-        <div className="w-10 h-10 rounded-xl bg-cyan-500/15 flex items-center justify-center text-cyan-400 border border-cyan-500/20">
-          <UploadCloud size={20} />
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+      <div className="flex items-center gap-2.5 mb-4">
+        <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+          <UploadCloud size={18} />
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-white tracking-tight">2. Upload do Prontuário Clínico</h2>
-          <p className="text-xs text-slate-400">
+          <h2 className="text-sm font-semibold text-slate-900 tracking-tight">Upload de Prontuário ou Exame</h2>
+          <p className="text-xs text-slate-500">
             {selectedPetName 
-              ? `Associando documento a ${selectedPetName} (ID #${selectedPetId})`
-              : 'Selecione um pet acima para habilitar o envio'}
+              ? `Vinculando documento ao paciente: ${selectedPetName}`
+              : 'Selecione um paciente acima para liberar o envio'}
           </p>
         </div>
       </div>
@@ -113,10 +113,10 @@ export const DocumentUploadSection: React.FC<DocumentUploadSectionProps> = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
-        className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-200 mb-4 ${
+        className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 mb-4 ${
           isDragging 
-            ? 'border-emerald-500 bg-emerald-500/10' 
-            : 'border-white/15 bg-slate-950/40 hover:border-white/30 hover:bg-slate-950/60'
+            ? 'border-emerald-500 bg-emerald-50/60' 
+            : 'border-slate-200 bg-slate-50/60 hover:border-emerald-500/60 hover:bg-emerald-50/20'
         }`}
       >
         <input
@@ -128,27 +128,27 @@ export const DocumentUploadSection: React.FC<DocumentUploadSectionProps> = ({
           onChange={handleFileChange}
         />
 
-        <div className="flex flex-col items-center gap-2.5">
-          <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-emerald-400 border border-white/10 shadow-inner">
-            <FileText size={24} />
+        <div className="flex flex-col items-center gap-2">
+          <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center text-emerald-600 border border-slate-200 shadow-xs">
+            <FileText size={18} />
           </div>
 
           {file ? (
             <div>
-              <div className="font-semibold text-white text-base">
-                📄 {file.name}
+              <div className="font-semibold text-slate-900 text-xs sm:text-sm">
+                {file.name}
               </div>
-              <div className="text-xs text-slate-400 mt-0.5">
-                {(file.size / 1024).toFixed(1)} KB — Pronto para enviar
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {(file.size / 1024).toFixed(1)} KB — Pronto para transmissão
               </div>
             </div>
           ) : (
             <div>
-              <div className="font-medium text-white text-sm">
-                Arraste seu arquivo clínico aqui ou clique para selecionar
+              <div className="font-medium text-slate-800 text-xs sm:text-sm">
+                Arraste o arquivo clínico aqui ou clique para selecionar
               </div>
-              <div className="text-xs text-slate-400 mt-1">
-                Suporta apenas <strong className="text-slate-300">.txt</strong> e <strong className="text-slate-300">.pdf</strong> (máx. 10 MB)
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                Formatos aceitos: <span className="font-medium text-slate-700">.pdf</span> e <span className="font-medium text-slate-700">.txt</span> (máx. 10 MB)
               </div>
             </div>
           )}
@@ -156,8 +156,8 @@ export const DocumentUploadSection: React.FC<DocumentUploadSectionProps> = ({
       </div>
 
       {error && (
-        <div className="flex items-center gap-2.5 bg-rose-500/10 border border-rose-500/30 p-3 rounded-xl text-rose-400 text-xs font-medium mb-4">
-          <AlertCircle size={18} className="shrink-0" />
+        <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 p-2.5 rounded-lg text-rose-700 text-xs font-medium mb-3.5">
+          <AlertCircle size={15} className="shrink-0 text-rose-600" />
           <span>{error}</span>
         </div>
       )}
@@ -167,17 +167,17 @@ export const DocumentUploadSection: React.FC<DocumentUploadSectionProps> = ({
         type="button"
         onClick={handleUpload}
         disabled={!selectedPetId || !file || uploading}
-        className="w-full inline-flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+        className="w-full inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium py-2 px-4 rounded-lg transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed text-xs shadow-sm"
       >
         {uploading ? (
           <>
-            <Loader2 size={18} className="animate-spin" />
-            Enviando e enfileirando Job (POST /pets/{selectedPetId}/documents)...
+            <Loader2 size={15} className="animate-spin" />
+            Enviando prontuário e registrando análise...
           </>
         ) : (
           <>
-            <UploadCloud size={18} />
-            Iniciar Processamento Clínico (HTTP 202)
+            <UploadCloud size={15} />
+            Iniciar Análise do Prontuário
           </>
         )}
       </button>
