@@ -1,3 +1,5 @@
+version: "3.8"
+
 services:
   # ============================================================================
   # Banco de Dados Relacional — PostgreSQL 16
@@ -58,8 +60,6 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: vetglobal-test-runner
-    profiles:
-      - test
     environment:
       APP_NAME: VetGlobal-Test
       ENVIRONMENT: test
