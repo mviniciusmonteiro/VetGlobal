@@ -70,16 +70,27 @@ POLL_INTERVAL_SECONDS=1
 UPLOAD_DIR=uploads
 ```
 
-### 4. Iniciar o Servidor
+### 4. Iniciar o Servidor Localmente
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Acesse no navegador:
-* **API:** [http://127.0.0.1:8000](http://127.0.0.1:8000)
-* **Swagger UI (Documentação Interativa):** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-* **ReDoc:** [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
+---
+
+### 🐳 Execução Rápida via Docker Compose (Recomendado)
+
+Você pode subir toda a infraestrutura (PostgreSQL + FastAPI + Frontend React) com um único comando, sem precisar instalar dependências locais:
+
+```bash
+docker compose up --build
+```
+
+Acessos disponíveis:
+* **Frontend Web (SPA):** [http://localhost:5173](http://localhost:5173)
+* **API Backend:** [http://localhost:8000](http://localhost:8000)
+* **Swagger UI (Docs Interativas):** [http://localhost:8000/docs](http://localhost:8000/docs)
+* **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
 ---
 
@@ -88,5 +99,9 @@ Acesse no navegador:
 Para rodar toda a suíte de testes com `pytest`:
 
 ```bash
+# Localmente:
 pytest -v
+
+# Ou isolado via container Docker:
+docker compose run --rm test
 ```

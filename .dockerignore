@@ -36,3 +36,7 @@ SYSTEM_DESCRIPTION.md
 .vscode/
 .idea/
 *.swp
+.agents/
+
+# Frontend (has its own Docker context)
+frontend/
