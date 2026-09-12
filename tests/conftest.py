@@ -4,6 +4,9 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from dotenv import load_dotenv
 
+# ==============================================================================
+# Configuração do Ambiente de Testes (executado antes de importar a aplicação)
+# ==============================================================================
 # 1. Carregar variáveis do .env base (onde residem as credenciais locais do desenvolvedor)
 base_env_file = Path(__file__).resolve().parent.parent / ".env"
 if base_env_file.exists():
@@ -21,11 +24,14 @@ if current_db_url and not current_db_url.endswith("/vetglobal_test"):
     parsed = urlparse(current_db_url)
     os.environ["DATABASE_URL"] = urlunparse(parsed._replace(path="/vetglobal_test"))
 
-# Garantir timeouts de polling rápidos para a suíte de testes
+# 4. Garantir timeouts de polling rápidos para a suíte de testes
 os.environ["POLL_TIMEOUT_SECONDS"] = "2"
 os.environ["POLL_INTERVAL_SECONDS"] = "0.1"
 os.environ["UPLOAD_DIR"] = "uploads_test"
 
+# ==============================================================================
+# Imports da Aplicação (devem ocorrer após a injeção do ambiente de testes)
+# ==============================================================================
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models.pet import Pet

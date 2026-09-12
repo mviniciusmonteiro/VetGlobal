@@ -12,10 +12,6 @@ from app.models.job import Job
 
 client = TestClient(app)
 
-
-
-
-
 def _create_test_pet(pet_tracker, name="Bidu", owner="Mauricio") -> int:
     """Helper para criar um pet de teste via API."""
     response = client.post("/pets", json={"name": name, "owner_name": owner})
@@ -562,3 +558,140 @@ def test_get_document_full_workflow(pet_tracker) -> None:
     assert data["completed_at"] is not None
     assert data["duration_ms"] is not None
     assert data["duration_ms"] >= 0
+
+
+# ==============================================================================
+# Testes de Deduplicação por Hash SHA-256 e Idempotência Transparente
+# ==============================================================================
+
+
+def test_upload_duplicate_document_pending_idempotent(pet_tracker) -> None:
+    """Testa que upload duplicado enquanto PENDING é idempotente e reaproveita o mesmo documento/job."""
+    pet_id = _create_test_pet(pet_tracker, name="Snoopy", owner="Charlie Brown")
+    file_content = b"Prontuario clinico original do Snoopy para analise."
+
+    files_1 = {"file": ("snoopy_exame.txt", io.BytesIO(file_content), "text/plain")}
+    resp_1 = client.post(f"/pets/{pet_id}/documents", files=files_1)
+    assert resp_1.status_code == 202
+    data_1 = resp_1.json()
+    assert data_1["is_duplicate"] is False
+    doc_id = data_1["document_id"]
+    job_id = data_1["job_id"]
+
+    # Reenvio do mesmo conteúdo para o mesmo pet (simulando retry ou duplo clique)
+    files_2 = {"file": ("snoopy_exame.txt", io.BytesIO(file_content), "text/plain")}
+    resp_2 = client.post(f"/pets/{pet_id}/documents", files=files_2)
+    assert resp_2.status_code == 202
+    data_2 = resp_2.json()
+    assert data_2["is_duplicate"] is True
+    assert data_2["document_id"] == doc_id
+    assert data_2["job_id"] == job_id
+
+    # Garantir que no banco de dados existe apenas 1 documento e 1 job para este pet
+    db = SessionLocal()
+    try:
+        docs = db.query(Document).filter(Document.pet_id == pet_id).all()
+        assert len(docs) == 1
+        assert docs[0].id == doc_id
+        assert docs[0].file_hash is not None
+        assert len(docs[0].jobs) == 1
+    finally:
+        db.close()
+
+
+def test_upload_duplicate_document_ready_returns_200(pet_tracker) -> None:
+    """Testa que upload duplicado de documento já READY retorna HTTP 200 com resultado imediato."""
+    pet_id = _create_test_pet(pet_tracker, name="Garfield", owner="Jon Arbuckle")
+    file_content = b"Exame de rotina: sobrepeso moderado e dieta recomendada."
+
+    # 1. Primeiro upload
+    files_1 = {"file": ("dieta_garfield.txt", io.BytesIO(file_content), "text/plain")}
+    resp_1 = client.post(f"/pets/{pet_id}/documents", files=files_1)
+    assert resp_1.status_code == 202
+    data_1 = resp_1.json()
+    doc_id = data_1["document_id"]
+    job_id = data_1["job_id"]
+
+    # 2. Worker conclui o job com sucesso (transiciona Document para READY)
+    complete_resp = client.post(
+        f"/internal/jobs/{job_id}/complete",
+        json={"status": "DONE", "summary": "Paciente necessita de reducao calorica controlada."},
+    )
+    assert complete_resp.status_code == 200
+
+    # 3. Reenvio do mesmo arquivo
+    files_2 = {"file": ("dieta_garfield.txt", io.BytesIO(file_content), "text/plain")}
+    resp_2 = client.post(f"/pets/{pet_id}/documents", files=files_2)
+    assert resp_2.status_code == 200  # HTTP 200 OK imediato pois já está processado
+    data_2 = resp_2.json()
+    assert data_2["is_duplicate"] is True
+    assert data_2["document_id"] == doc_id
+    assert data_2["job_id"] == job_id
+    assert data_2["status"] == "DONE"
+
+
+def test_upload_duplicate_after_failed_job_allows_retry(pet_tracker) -> None:
+    """Testa que arquivo idêntico cujo processamento anterior falhou (FAILED) permite novo upload (retry)."""
+    pet_id = _create_test_pet(pet_tracker, name="Pluto", owner="Mickey Mouse")
+    file_content = b"Exame cardiologico com ruido no sinal."
+
+    # 1. Primeiro upload
+    files_1 = {"file": ("ecg_pluto.txt", io.BytesIO(file_content), "text/plain")}
+    resp_1 = client.post(f"/pets/{pet_id}/documents", files=files_1)
+    assert resp_1.status_code == 202
+    data_1 = resp_1.json()
+    doc_id_1 = data_1["document_id"]
+    job_id_1 = data_1["job_id"]
+
+    # 2. Worker reporta falha (FAILED)
+    fail_resp = client.post(
+        f"/internal/jobs/{job_id_1}/complete",
+        json={"status": "FAILED", "error": "Sinal corrompido durante leitura."},
+    )
+    assert fail_resp.status_code == 200
+
+    # 3. Reenvio do mesmo arquivo deve permitir retry (novo Document e novo Job)
+    files_2 = {"file": ("ecg_pluto.txt", io.BytesIO(file_content), "text/plain")}
+    resp_2 = client.post(f"/pets/{pet_id}/documents", files=files_2)
+    assert resp_2.status_code == 202
+    data_2 = resp_2.json()
+    assert data_2["is_duplicate"] is False
+    assert data_2["document_id"] != doc_id_1
+    assert data_2["job_id"] != job_id_1
+    assert data_2["status"] == "ENQUEUED"
+
+    # Verificar que ambos os documentos existem no histórico do pet
+    db = SessionLocal()
+    try:
+        docs = db.query(Document).filter(Document.pet_id == pet_id).order_by(Document.id).all()
+        assert len(docs) == 2
+        assert docs[0].status == "FAILED"
+        assert docs[1].status == "PENDING"
+    finally:
+        db.close()
+
+
+def test_upload_same_content_different_pets_allowed(pet_tracker) -> None:
+    """Testa que o mesmo arquivo enviado para pets diferentes gera documentos independentes (isolamento de paciente)."""
+    pet_id_1 = _create_test_pet(pet_tracker, name="Bob", owner="Alice")
+    pet_id_2 = _create_test_pet(pet_tracker, name="Max", owner="Carlos")
+
+    shared_content = b"Formulario padrao de internacao clinica hospitalar."
+
+    files_1 = {"file": ("termo_internacao.txt", io.BytesIO(shared_content), "text/plain")}
+    files_2 = {"file": ("termo_internacao.txt", io.BytesIO(shared_content), "text/plain")}
+
+    resp_1 = client.post(f"/pets/{pet_id_1}/documents", files=files_1)
+    resp_2 = client.post(f"/pets/{pet_id_2}/documents", files=files_2)
+
+    assert resp_1.status_code == 202
+    assert resp_2.status_code == 202
+
+    data_1 = resp_1.json()
+    data_2 = resp_2.json()
+
+    assert data_1["is_duplicate"] is False
+    assert data_2["is_duplicate"] is False
+    assert data_1["document_id"] != data_2["document_id"]
+    assert data_1["job_id"] != data_2["job_id"]
+

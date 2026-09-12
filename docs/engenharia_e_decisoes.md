@@ -163,3 +163,56 @@ A suíte de testes do VetGlobal roda 100% contra uma base PostgreSQL real (`vetg
 
 ### Testes de Concorrência com `asyncio.gather`
 Para validar a resiliência do Long Polling, foram construídos testes assíncronos que abrem a requisição de poll e, de forma concorrente em background, disparam a conclusão do job via worker, assegurando que o poll desbloqueia e retorna o resultado sem travas ou timeouts indesejados.
+
+---
+
+## 9. Deduplicação por Hash SHA-256 e Idempotência Transparente no Upload
+
+### A Ambiguidade do Desafio
+O documento de requisitos pontua explicitamente sob a seção de ambiguidades:  
+> *"How should duplicate uploads be handled?"* — e cita como bônus: *"idempotency for upload or job completion"*.
+
+Em sistemas clínicos assíncronos, o mesmo arquivo pode ser enviado múltiplas vezes por diversos fatores:
+1. **Instabilidade de rede ou timeout:** o cliente envia o upload, a API processa e grava, mas a resposta HTTP é perdida na rota; o cliente/frontend então reenvia o arquivo automaticamente.
+2. **Duplo clique do operador:** o veterinário clica repetidamente no botão de envio.
+3. **Reenvio manual acidental:** envio posterior do mesmo arquivo de exame já cadastrado e sumarizado.
+
+### A Arquitetura de Deduplicação Adotada
+
+Para solucionar esse problema sem introduzir gargalos ou complexidade desnecessária, foi adotada a **Deduplicação por Hash SHA-256 com Idempotência Transparente**:
+
+1. **Cálculo de Hash Criptográfico:**  
+   Ao ler os bytes do arquivo em memória (`await file.read()`), o sistema calcula `hashlib.sha256(content).hexdigest()`. O hash resultante possui 64 caracteres hexadecimais com probabilidade negligenciável de colisão ($2^{-256}$).
+2. **Indexação Composta em Banco de Dados:**  
+   A coluna `file_hash` é persistida no modelo `Document` com um índice composto no PostgreSQL:
+   ```python
+   __table_args__ = (Index("ix_documents_pet_hash", "pet_id", "file_hash"),)
+   ```
+   Isso permite que a consulta de existência execute uma busca em árvore B ($O(1)$ em memória), sem varrer a tabela.
+3. **Isolamento Estrito por Paciente (`pet_id`):**  
+   A unicidade do hash é avaliada **estritamente dentro do contexto do pet**. Se dois pets distintos (ex: Pet A e Pet B) receberem um mesmo formulário ou exame padrão, ambos os registros são criados de forma totalmente isolada e independente, respeitando a privacidade dos prontuários.
+
+### Matriz de Decisão de Estados
+
+A verificação de duplicidade avalia o status do documento existente:
+
+```
+                  ┌───────────────► PENDING: Retorna 202 Accepted existente (is_duplicate=true)
+Upload Recebido   │                          (Evita jobs concorrentes redundantes na fila)
+      e           │
+ Hash SHA-256 ────┼───────────────► READY:   Retorna 200 OK imediato (is_duplicate=true)
+ Calculado        │                          (Entrega o resumo pronto sem esperar polling)
+                  │
+                  └───────────────► FAILED / Inexistente: Permite novo upload (is_duplicate=false)
+                                             (Garante capacidade de retry caso o anterior tenha falhado)
+```
+
+| Status do Documento no Banco | Ação da API | Código HTTP | `is_duplicate` | Benefício de Engenharia |
+|---|---|---|---|---|
+| **`PENDING`** | Reutiliza `Document` e `Job` existentes | `202 Accepted` | `True` | Protege a fila de processamento contra jobs redundantes por clique duplo ou retries de rede. |
+| **`READY`** | Reutiliza `Document` e `Job` existentes | `200 OK` | `True` | Economiza computação e tokens de LLM; entrega o resumo pronto na hora para o frontend sem necessidade de aguardar os 25s de Long Polling. |
+| **`FAILED`** | **Ignora duplicado e cria novo** | `202 Accepted` | `False` | **Resiliência e Recuperabilidade:** Permite que o operador reenvie o arquivo para tentar novo processamento caso uma execução anterior tenha quebrado temporariamente. |
+
+### Economia de Armazenamento e Recursos
+Com essa estratégia, nenhum byte binário redundante é gravado na coluna `BYTEA` do PostgreSQL quando um documento repetido em estado `PENDING` ou `READY` é detectado. O sistema mantém consistência transacional absoluta e devolve uma resposta perfeitamente previsível e idempotente ao cliente.
+

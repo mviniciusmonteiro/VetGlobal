@@ -8,7 +8,8 @@ export interface Pet {
 export interface DocumentUploadResult {
   document_id: number;
   job_id: number;
-  status: 'ENQUEUED';
+  status: string;
+  is_duplicate?: boolean;
 }
 
 export interface DocumentDetails {

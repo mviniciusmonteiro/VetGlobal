@@ -115,14 +115,14 @@ docker compose run --rm test
 
 **Isolamento.** Cada teste cria seus próprios dados e registra os IDs via fixture `pet_tracker`. No teardown, a fixture executa deleção em cascata (`Pet → Document → Job`) garantindo que nenhum dado persista entre testes.
 
-### Cobertura de Testes (44 testes)
+### Cobertura de Testes (48 testes)
 
 | Categoria | Qtd | O que cobrem |
 |-----------|-----|-------------|
 | **Health** | 1 | Verificação de integridade |
 | **Database** | 2 | Conexão, lifecycle completo (Pet→Doc→Job), cascade delete |
 | **Pets** | 9 | Criação, validação, GET, 404, listagem, paginação, pet com documents |
-| **Documents** | 21 | Upload .txt/.pdf, extensões inválidas (415), pet inexistente (404), arquivo grande (413), arquivo vazio (422), boundary 10 MB, múltiplos uploads, GET por status, upload sem arquivo, fluxo ponta-a-ponta |
+| **Documents** | 25 | Upload .txt/.pdf, extensões inválidas (415), pet inexistente (404), arquivo grande (413), arquivo vazio (422), boundary 10 MB, deduplicação SHA-256 e idempotência (PENDING/READY/FAILED/diferentes pets), GET por status, upload sem arquivo, fluxo ponta-a-ponta |
 | **Jobs** | 10 | DONE/FAILED, 404, idempotência, conflito de estado (409), status inválido (422), DONE sem summary, FAILED sem error |
 | **Polling** | 6 | Retorno imediato, conclusão concorrente (DONE/FAILED), timeout 204, condição `after_job_id`, input negativo (422), documento inexistente (404) |
 
@@ -130,7 +130,7 @@ docker compose run --rm test
 
 * **Happy Path** — fluxo principal funciona corretamente
 * **Error Handling** — códigos HTTP previsíveis (404, 409, 413, 415, 422) sem 500
-* **Idempotência** — chamadas duplicadas ao worker retornam 200 sem alterar dados
+* **Idempotência** — chamadas duplicadas ao worker e reenvio de arquivos idênticos retornam 200/202 sem duplicar processamento ou bytes no banco
 * **Conflito de Estado** — transições proibidas (DONE→FAILED) retornam 409
 * **Boundary Testing** — arquivo exatamente no limite de 10 MB
 * **Edge Cases** — payloads incompletos do worker
@@ -343,9 +343,14 @@ Worker envia status X para Job J
 
 **Nota sobre concorrência:** A implementação não usa `SELECT ... FOR UPDATE` (lock pessimista). Em um sistema com um único worker por job, isso é aceitável. Em produção com workers concorrentes, seria necessário lock pessimista ou optimistic locking com coluna de versão.
 
-### Upload de Documentos
+### Upload de Documentos e Deduplicação por Hash SHA-256
 
-Múltiplos uploads para o mesmo pet são **permitidos**. Cada upload gera um novo `Document` + `Job` independente. Justificativa: um pet pode ter múltiplos prontuários clínicos ao longo do tempo. Deduplicação por hash de conteúdo seria over-engineering para o escopo.
+A API implementa **Deduplicação Inteligente com Idempotência Transparente**:
+
+* **Hash SHA-256:** Ao receber o arquivo, calcula-se o hash criptográfico do conteúdo e verifica-se a existência prévia na base através de um índice composto `(pet_id, file_hash)`.
+* **Idempotência Transparente (`PENDING` ou `READY`):** Se o mesmo arquivo for enviado novamente para o mesmo pet enquanto pendente (`PENDING`), retorna o `job_id` existente com `202 Accepted` (`is_duplicate: true`), prevenindo sobrecarga de workers. Se o documento já estiver concluído (`READY`), retorna `200 OK` imediatamente com o resumo pronto, dispensando o polling.
+* **Capacidade de Retry (`FAILED`):** Se a execução anterior falhou, o arquivo é liberado para novo upload (`is_duplicate: false`), gerando um novo `Job` para reprocessamento.
+* **Isolamento por Paciente:** A verificação é escopada ao `pet_id`. Uploads do mesmo termo ou exame para pets diferentes geram registros independentes, mantendo a privacidade e integridade dos prontuários.
 
 ---
 

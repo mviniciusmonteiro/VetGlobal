@@ -1,6 +1,6 @@
 # Plano de Testes — VetGlobal Backend
 
-Este documento estabelece a estratégia formal de testes, a arquitetura do ambiente de testes, a matriz de cobertura dos 44 testes automatizados e os critérios de qualidade adotados no projeto **VetGlobal**.
+Este documento estabelece a estratégia formal de testes, a arquitetura do ambiente de testes, a matriz de cobertura dos 48 testes automatizados e os critérios de qualidade adotados no projeto **VetGlobal**.
 
 ---
 
@@ -10,7 +10,7 @@ Este documento estabelece a estratégia formal de testes, a arquitetura do ambie
 * **Prevenir Regressões e Efeitos Colaterais:** Assegurar que alterações na camada de persistência ou nos contratos HTTP não quebrem fluxos existentes.
 * **Validar Concorrência e Condições de Corrida:** Demonstrar que o mecanismo de Long Polling é reativo e desbloqueia corretamente sob requisições paralelas sem bloquear o Event Loop ou o pool de threads.
 * **Garantir Previsibilidade no Tratamento de Erros:** Certificar que nenhuma falha de validação ou exceção de domínio resulte em `500 Internal Server Error`, retornando os status codes HTTP semânticos (404, 409, 413, 415, 422).
-* **Validar Idempotência:** Garantir a resiliência contra retentativas de rede de workers externos (*first-write-wins*).
+* **Validar Idempotência:** Garantir a resiliência contra retentativas de rede de workers externos (*first-write-wins*) e deduplicação de uploads repetidos.
 
 ---
 
@@ -37,7 +37,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 * A fixture de ambiente no `tests/conftest.py` sobrescreve as variáveis:
   * `POLL_TIMEOUT_SECONDS = 2` (em vez de 25s)
   * `POLL_INTERVAL_SECONDS = 0.1` (em vez de 0.5s)
-* **Resultado:** Os 44 testes automatizados rodam em **menos de 10 segundos**, mantendo a mesma semântica do código em produção.
+* **Resultado:** Os 48 testes automatizados rodam em **menos de 10 segundos**, mantendo a mesma semântica do código em produção.
 
 ---
 
@@ -90,7 +90,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 | PET-09 | `test_list_pets_pagination` | Paginação com parâmetros `skip` e `limit` | HTTP 200 OK com recorte exato |
 | PET-10 | `test_get_pet_with_uploaded_documents` | Pet com múltiplos documentos vinculados | HTTP 200 OK mantendo integridade |
 
-### 4.3. Upload e Gestão de Documentos (`tests/test_documents.py` — 21 testes)
+### 4.3. Upload e Gestão de Documentos (`tests/test_documents.py` — 25 testes)
 
 | ID | Nome do Teste | Cenário Avaliado | Resultado Esperado |
 |----|---------------|------------------|--------------------|
@@ -102,7 +102,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 | DOC-06 | `test_upload_file_exactly_at_size_limit` | Arquivo exatamente no limite (10 MB exatos) | HTTP 202 Accepted (Boundary validado) |
 | DOC-07 | `test_upload_empty_file` | Arquivo com 0 bytes | HTTP 422 Unprocessable Entity |
 | DOC-08 | `test_upload_without_file_field` | Requisição multipart sem o campo `file` | HTTP 422 Unprocessable Entity |
-| DOC-09 | `test_upload_multiple_documents_same_pet` | Múltiplos uploads sucessivos para mesmo pet | HTTP 202 em todos; jobs independentes |
+| DOC-09 | `test_upload_multiple_documents_same_pet` | Múltiplos uploads de arquivos distintos para mesmo pet | HTTP 202 em todos; jobs independentes |
 | DOC-10 | `test_get_document_pending` | Consulta de documento recém-criado | HTTP 200 OK + status `PENDING` |
 | DOC-11 | `test_get_document_ready` | Consulta de documento com job concluído | HTTP 200 OK + status `READY` + `summary` |
 | DOC-12 | `test_get_document_failed` | Consulta de documento com job falhado | HTTP 200 OK + status `FAILED` + `error` |
@@ -115,6 +115,10 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 | DOC-19 | `test_poll_respects_after_job_id_condition` | Poll com `after_job_id` superior aos jobs concluídos | Permanece aguardando até atingir 204 |
 | DOC-20 | `test_poll_negative_after_job_id` | Envio de `after_job_id < 0` | HTTP 422 Unprocessable Entity |
 | DOC-21 | `test_poll_document_not_found` | Poll em documento inexistente | HTTP 404 Not Found imediato (sem loop) |
+| DOC-22 | `test_upload_duplicate_document_pending_idempotent` | Reenvio do mesmo arquivo enquanto status `PENDING` | HTTP 202 Accepted + mesmo `document_id` + `is_duplicate: true` (sem duplicar no banco) |
+| DOC-23 | `test_upload_duplicate_document_ready_returns_200` | Reenvio do mesmo arquivo após conclusão (`READY`) | HTTP 200 OK + resumo pronto + `is_duplicate: true` (entrega imediata) |
+| DOC-24 | `test_upload_duplicate_after_failed_job_allows_retry` | Reenvio de arquivo idêntico após falha (`FAILED`) | HTTP 202 Accepted + novo `document_id` + novo `job_id` (retry liberado) |
+| DOC-25 | `test_upload_same_content_different_pets_allowed` | Upload do mesmo arquivo para pets diferentes | HTTP 202 Accepted para ambos (isolamento estrito entre pacientes) |
 
 ### 4.4. Jobs e Simulação do Worker (`tests/test_jobs.py` — 10 testes)
 

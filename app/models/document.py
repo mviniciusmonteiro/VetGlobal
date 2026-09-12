@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
-from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
@@ -11,6 +11,9 @@ if TYPE_CHECKING:
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        Index("ix_documents_pet_hash", "pet_id", "file_hash"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     pet_id: Mapped[int] = mapped_column(
@@ -21,6 +24,11 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     file_content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_hash: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
     content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(
         String(50),

@@ -20,13 +20,17 @@ class JobStatus(str, Enum):
 
 
 class DocumentUploadResponse(BaseModel):
-    """Schema de resposta retornado ao realizar upload de documento (HTTP 202)."""
-    document_id: int = Field(..., description="ID do documento criado")
-    job_id: int = Field(..., description="ID do job de processamento enfileirado")
+    """Schema de resposta retornado ao realizar upload de documento (HTTP 202 ou 200 idempotente)."""
+    document_id: int = Field(..., description="ID do documento criado ou existente")
+    job_id: int = Field(..., description="ID do job de processamento enfileirado ou existente")
     status: str = Field(
         default=JobStatus.ENQUEUED.value,
-        description="Status inicial do processamento (ENQUEUED)",
+        description="Status do processamento (ENQUEUED, PROCESSING, DONE)",
         examples=["ENQUEUED"],
+    )
+    is_duplicate: bool = Field(
+        default=False,
+        description="Indica se a requisição foi atendida de forma idempotente por deduplicação de conteúdo",
     )
 
     model_config = ConfigDict(from_attributes=True)

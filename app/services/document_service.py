@@ -1,5 +1,6 @@
+import hashlib
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from fastapi import UploadFile
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
@@ -58,14 +59,19 @@ async def upload_document_for_pet(
     db: Session,
     pet_id: int,
     file: UploadFile,
-) -> tuple[Document, Job]:
+) -> Tuple[Document, Job, bool]:
     """
-    Orquestra o upload e persistência do documento e a criação do Job assíncrono:
+    Orquestra o upload, deduplicação e persistência do documento com criação de Job assíncrono:
     1. Valida se o pet existe.
     2. Valida extensão do arquivo (.txt ou .pdf).
     3. Lê os bytes do arquivo e valida o limite máximo de tamanho (10 MB).
-    4. Cria atomicamente o registro Document (status=PENDING) e Job (status=ENQUEUED).
-    5. Retorna a tupla (Document, Job).
+    4. Calcula o hash SHA-256 do conteúdo.
+    5. Deduplicação e Idempotência:
+       - Se já existir documento com o mesmo hash para este pet com status PENDING ou READY,
+         retorna o documento existente e seu job sem persistir bytes duplicados nem gerar novos jobs (is_duplicate=True).
+       - Se a execução anterior falhou (status=FAILED), permite novo upload para viabilizar retry.
+    6. Se for conteúdo novo, cria atomicamente o registro Document e Job (is_duplicate=False).
+    7. Retorna a tupla (Document, Job, is_duplicate).
     """
     # 1. Verificar se o pet existe
     pet = db.get(Pet, pet_id)
@@ -88,12 +94,31 @@ async def upload_document_for_pet(
             f"Arquivo de {file_size / (1024 * 1024):.2f} MB excede o limite máximo permitido de {max_mb} MB."
         )
 
-    # 4. Criar registros no PostgreSQL na mesma transação (ACID)
+    # 4. Calcular hash SHA-256 do conteúdo
+    file_hash = hashlib.sha256(content).hexdigest()
+
+    # 5. Verificar duplicidade no mesmo pet para status PENDING ou READY (Idempotência Transparente)
+    stmt = (
+        select(Document)
+        .options(selectinload(Document.jobs))
+        .where(
+            Document.pet_id == pet_id,
+            Document.file_hash == file_hash,
+            Document.status.in_([DocumentStatus.PENDING.value, DocumentStatus.READY.value]),
+        )
+        .order_by(Document.id.desc())
+    )
+    existing_doc = db.scalar(stmt)
+    if existing_doc and existing_doc.jobs:
+        return existing_doc, existing_doc.jobs[-1], True
+
+    # 6. Criar registros no PostgreSQL na mesma transação (ACID)
     doc = Document(
         pet_id=pet_id,
         filename=file.filename or "unnamed_document",
         file_content=content,
         file_size=file_size,
+        file_hash=file_hash,
         content_type=file.content_type,
         status=DocumentStatus.PENDING.value,
     )
@@ -110,7 +135,7 @@ async def upload_document_for_pet(
     db.refresh(doc)
     db.refresh(job)
 
-    return doc, job
+    return doc, job, False
 
 
 def get_document_by_id(db: Session, document_id: int) -> Optional[Document]:

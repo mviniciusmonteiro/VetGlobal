@@ -24,21 +24,34 @@ router = APIRouter(tags=["Documents"])
     "/pets/{pet_id}/documents",
     response_model=DocumentUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload de documento clínico para um Pet",
+    responses={
+        status.HTTP_202_ACCEPTED: {
+            "model": DocumentUploadResponse,
+            "description": "Upload aceito e job enfileirado para processamento assíncrono.",
+        },
+        status.HTTP_200_OK: {
+            "model": DocumentUploadResponse,
+            "description": "Documento idêntico já processado anteriormente (idempotência transparente).",
+        },
+    },
+    summary="Upload de documento clínico para um Pet com Deduplicação Idempotente",
     description=(
-        "Recebe um arquivo clínico (.txt ou .pdf) de até 10 MB, persiste os dados binários "
-        "diretamente no PostgreSQL de forma stateless e atômica, enfileira um Job assíncrono "
-        "e retorna HTTP 202 Accepted com os identificadores para rastreamento."
+        "Recebe um arquivo clínico (.txt ou .pdf) de até 10 MB, calcula o hash SHA-256 e verifica "
+        "se o mesmo documento já foi enviado para este pet. Se já concluído (READY), retorna HTTP 200 "
+        "com os dados existentes. Se ainda pendente (PENDING), retorna HTTP 202 com o job existente sem "
+        "duplicar o processamento. Se for novo ou se o anterior falhou (FAILED), persiste os dados binários "
+        "diretamente no PostgreSQL e enfileira um novo Job assíncrono."
     ),
 )
 async def upload_pet_document(
     pet_id: int,
+    response: Response,
     file: UploadFile = File(..., description="Arquivo clínico nos formatos .txt ou .pdf (máx. 10 MB)"),
     db: Session = Depends(get_db),
 ) -> DocumentUploadResponse:
-    """Endpoint para upload de documento associado a um pet."""
+    """Endpoint para upload de documento associado a um pet com deduplicação transparente."""
     try:
-        doc, job = await document_service.upload_document_for_pet(
+        doc, job, is_duplicate = await document_service.upload_document_for_pet(
             db=db,
             pet_id=pet_id,
             file=file,
@@ -64,10 +77,16 @@ async def upload_pet_document(
             detail=str(e),
         )
 
+    # Se o documento já estiver pronto (READY) e foi reaproveitado por deduplicação,
+    # responde com 200 OK informando que o resultado já está disponível
+    if is_duplicate and doc.status == "READY":
+        response.status_code = status.HTTP_200_OK
+
     return DocumentUploadResponse(
         document_id=doc.id,
         job_id=job.id,
         status=job.status,
+        is_duplicate=is_duplicate,
     )
 
 
