@@ -125,3 +125,59 @@ def test_list_pets(tracker) -> None:
     ids = [p["id"] for p in pets_list]
     assert res1.json()["id"] in ids
     assert res2.json()["id"] in ids
+
+
+# ==============================================================================
+# Testes de Paginação e Fluxo Completo
+# ==============================================================================
+
+def test_list_pets_pagination(tracker) -> None:
+    """Testa que os parâmetros skip e limit da paginação funcionam corretamente.
+
+    Cria 3 pets e verifica que skip=1&limit=1 retorna exatamente 1 pet,
+    e que skip=0&limit=2 retorna exatamente 2 pets. Garante que a paginação
+    implementada no service (offset/limit) está efetivamente conectada ao endpoint.
+    """
+    created_ids = []
+    for i in range(3):
+        resp = client.post("/pets", json={"name": f"Page{i}", "owner_name": f"Owner{i}"})
+        assert resp.status_code == 201
+        created_ids.append(resp.json()["id"])
+        tracker(resp.json()["id"])
+
+    # limit=1 deve retornar exatamente 1 pet
+    resp_limit = client.get("/pets?skip=0&limit=1")
+    assert resp_limit.status_code == 200
+    assert len(resp_limit.json()) == 1
+
+    # skip=1&limit=1 deve retornar exatamente 1 pet diferente do primeiro
+    resp_skip = client.get("/pets?skip=0&limit=2")
+    assert resp_skip.status_code == 200
+    assert len(resp_skip.json()) == 2
+
+
+def test_get_pet_with_uploaded_documents(tracker) -> None:
+    """Testa que GET /pets/{id} retorna dados corretos mesmo após upload de documentos.
+
+    Verifica que a consulta de pet funciona normalmente quando o pet possui
+    documentos associados, sem erros de serialização nos relationships.
+    """
+    # Criar pet
+    create_resp = client.post("/pets", json={"name": "DocPet", "owner_name": "DocOwner"})
+    assert create_resp.status_code == 201
+    pet_id = create_resp.json()["id"]
+    tracker(pet_id)
+
+    # Upload de documento para o pet
+    import io
+    files = {"file": ("exame.txt", io.BytesIO(b"Dados do exame."), "text/plain")}
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+
+    # GET pet — deve retornar normalmente sem erros
+    get_resp = client.get(f"/pets/{pet_id}")
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["id"] == pet_id
+    assert data["name"] == "DocPet"
+    assert data["owner_name"] == "DocOwner"

@@ -446,3 +446,119 @@ def test_poll_document_not_found() -> None:
     assert "não encontrado" in response.json()["detail"].lower()
 
 
+# ==============================================================================
+# Testes de Edge Cases: Boundary Conditions e Validações de Input
+# ==============================================================================
+
+def test_upload_file_exactly_at_size_limit(pet_tracker) -> None:
+    """Testa que um arquivo com exatamente 10 MB (boundary) é aceito com sucesso.
+
+    Complementa o teste de rejeição (10MB + 1 byte). Boundary testing clássico:
+    o limite é <= 10MB, então exatamente 10MB deve passar.
+    """
+    pet_id = _create_test_pet(pet_tracker, name="Boundary", owner="Tester")
+
+    # Exatamente 10 MB
+    exact_limit_content = b"x" * (10 * 1024 * 1024)
+    files = {
+        "file": ("limite_exato.txt", io.BytesIO(exact_limit_content), "text/plain")
+    }
+
+    response = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert response.status_code == 202
+
+    data = response.json()
+    assert data["status"] == "ENQUEUED"
+    assert data["document_id"] > 0
+    assert data["job_id"] > 0
+
+    # Verificar persistência no banco
+    db = SessionLocal()
+    try:
+        db_doc = db.get(Document, data["document_id"])
+        assert db_doc is not None
+        assert db_doc.file_size == 10 * 1024 * 1024
+    finally:
+        db.close()
+
+
+def test_upload_without_file_field(pet_tracker) -> None:
+    """Testa que uma requisição sem o campo 'file' no multipart form retorna 422.
+
+    O endpoint exige file: UploadFile = File(...). Sem ele, o FastAPI deve
+    rejeitar a requisição com Unprocessable Entity antes de chegar ao service.
+    """
+    pet_id = _create_test_pet(pet_tracker, name="SemArquivo", owner="Teste")
+
+    # POST sem enviar nenhum campo de arquivo
+    response = client.post(f"/pets/{pet_id}/documents")
+    assert response.status_code == 422
+
+
+def test_poll_negative_after_job_id(pet_tracker) -> None:
+    """Testa que after_job_id negativo é rejeitado com 422 pela validação do Query param.
+
+    O endpoint define after_job_id com ge=0, portanto valores negativos
+    devem ser rejeitados pelo Pydantic/FastAPI antes de chegar à lógica de polling.
+    """
+    pet_id = _create_test_pet(pet_tracker, name="Negativo", owner="Teste")
+    files = {"file": ("doc.txt", io.BytesIO(b"conteudo"), "text/plain")}
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+
+    response = client.get(f"/documents/{doc_id}/poll?after_job_id=-1")
+    assert response.status_code == 422
+
+
+def test_get_document_full_workflow(pet_tracker) -> None:
+    """Testa o fluxo completo ponta-a-ponta: criar pet → upload → complete → get document.
+
+    Verifica que todos os campos estão consistentes ao final do ciclo completo,
+    incluindo observabilidade (completed_at, duration_ms).
+    """
+    # 1. Criar pet
+    pet_resp = client.post("/pets", json={"name": "Workflow", "owner_name": "End2End"})
+    assert pet_resp.status_code == 201
+    pet_id = pet_resp.json()["id"]
+    pet_tracker(pet_id)
+
+    # 2. Upload de documento
+    file_content = b"Resultado de hemograma completo com contagem diferencial."
+    files = {"file": ("hemograma.txt", io.BytesIO(file_content), "text/plain")}
+    upload_resp = client.post(f"/pets/{pet_id}/documents", files=files)
+    assert upload_resp.status_code == 202
+    doc_id = upload_resp.json()["document_id"]
+    job_id = upload_resp.json()["job_id"]
+
+    # 3. Verificar documento PENDING
+    pending_resp = client.get(f"/documents/{doc_id}")
+    assert pending_resp.status_code == 200
+    assert pending_resp.json()["status"] == "PENDING"
+    assert pending_resp.json()["summary"] is None
+    assert pending_resp.json()["completed_at"] is None
+    assert pending_resp.json()["duration_ms"] is None
+
+    # 4. Worker completa o job
+    summary = "Hemograma dentro dos parâmetros normais. Sem alterações significativas."
+    complete_resp = client.post(
+        f"/internal/jobs/{job_id}/complete",
+        json={"status": "DONE", "summary": summary},
+    )
+    assert complete_resp.status_code == 200
+
+    # 5. Verificar documento READY com todos os campos de observabilidade
+    ready_resp = client.get(f"/documents/{doc_id}")
+    assert ready_resp.status_code == 200
+    data = ready_resp.json()
+    assert data["id"] == doc_id
+    assert data["pet_id"] == pet_id
+    assert data["filename"] == "hemograma.txt"
+    assert data["file_size"] == len(file_content)
+    assert data["status"] == "READY"
+    assert data["summary"] == summary
+    assert data["error"] is None
+    assert data["created_at"] is not None
+    assert data["completed_at"] is not None
+    assert data["duration_ms"] is not None
+    assert data["duration_ms"] >= 0

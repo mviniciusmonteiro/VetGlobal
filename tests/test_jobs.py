@@ -243,3 +243,73 @@ def test_complete_job_invalid_status(pet_tracker) -> None:
             json={"status": inv_status, "summary": "test"},
         )
         assert resp.status_code == 422
+
+
+# ==============================================================================
+# Testes de Edge Cases: Payloads Incompletos do Worker
+# ==============================================================================
+
+def test_complete_job_done_without_summary(pet_tracker) -> None:
+    """Testa que o worker pode concluir um job como DONE sem enviar summary.
+    
+    O campo summary é Optional no schema. O sistema não deve quebrar quando
+    o worker omite o resumo — deve gravar summary=None no documento.
+    """
+    _, doc_id, job_id = _create_pet_and_job(pet_tracker, pet_name="Mia")
+
+    payload = {"status": "DONE"}
+
+    response = client.post(f"/internal/jobs/{job_id}/complete", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["job_id"] == job_id
+    assert data["status"] == "DONE"
+    assert data["document_status"] == "READY"
+    assert data["summary"] is None
+    assert data["error"] is None
+    assert data["completed_at"] is not None
+
+    # Verificar persistência no banco
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, doc_id)
+        assert doc is not None
+        assert doc.status == "READY"
+        assert doc.summary is None
+        assert doc.error is None
+    finally:
+        db.close()
+
+
+def test_complete_job_failed_without_error(pet_tracker) -> None:
+    """Testa que o worker pode concluir um job como FAILED sem enviar mensagem de erro.
+    
+    O campo error é Optional no schema. O sistema não deve quebrar quando
+    o worker omite a mensagem — deve gravar error=None no documento.
+    """
+    _, doc_id, job_id = _create_pet_and_job(pet_tracker, pet_name="Zeus")
+
+    payload = {"status": "FAILED"}
+
+    response = client.post(f"/internal/jobs/{job_id}/complete", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["job_id"] == job_id
+    assert data["status"] == "FAILED"
+    assert data["document_status"] == "FAILED"
+    assert data["summary"] is None
+    assert data["error"] is None
+    assert data["completed_at"] is not None
+
+    # Verificar persistência no banco
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, doc_id)
+        assert doc is not None
+        assert doc.status == "FAILED"
+        assert doc.summary is None
+        assert doc.error is None
+    finally:
+        db.close()
