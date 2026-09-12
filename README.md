@@ -447,7 +447,7 @@ Esses campos permitem monitorar a latência dos jobs e detectar degradação de 
 
 Para uma análise aprofundada da arquitetura, do plano de desenvolvimento, testes e exemplos via terminal, consulte os documentos detalhados na pasta `docs/`:
 
-* [Plano de Testes](docs/plano_de_testes.md) — Matriz formal dos 44 testes automatizados, estratégia de isolamento térmico (`pet_tracker`), concorrência real e critérios de aceite.
+* [Plano de Testes](docs/plano_de_testes.md) — Matriz formal dos 48 testes automatizados, estratégia de isolamento térmico (`pet_tracker`), concorrência real e critérios de aceite.
 * [Plano de Implementação & Matriz de Requisitos](docs/plano_de_implementacao.md) — Cronologia das 12 fases, metodologia de desenvolvimento iterativo e rastreabilidade de conformidade.
 * [Engenharia, Arquitetura e Decisões Técnicas](docs/engenharia_e_decisoes.md) — Prevenção de Threadpool Starvation, controle de cache L1 do Identity Map (`db.expire_all()`), persistência ACID em BYTEA, resiliência de pool e idempotência.
 * [Guia de Execução via cURL](docs/guia_de_execucao_curl.md) — Fluxo passo a passo de requisições prontas para teste rápido via linha de comando.

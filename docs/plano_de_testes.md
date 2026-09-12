@@ -66,7 +66,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 
 ---
 
-## 4. Matriz Detalhada de Casos de Teste (44 Testes)
+## 4. Matriz Detalhada de Casos de Teste (48 Testes)
 
 ### 4.1. Camada de Banco de Dados (`tests/test_database.py` — 2 testes)
 
@@ -147,7 +147,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 
 Para considerar a suíte de testes aprovada para entrega de produção:
 
-1. **Taxa de Sucesso:** 100% dos testes aprovados (`44 passed, 0 failed, 0 errors`).
+1. **Taxa de Sucesso:** 100% dos testes aprovados (`48 passed, 0 failed, 0 errors`).
 2. **Tempo Total de Execução:** Menor que 15 segundos em ambiente local e conteinerizado.
 3. **Ausência de Erros 500:** Nenhum caso de teste negativo (dados corrompidos, tipos inválidos, arquivos gigantes) pode disparar exceção não tratada.
 4. **Isolamento de Dados:** Ao término da execução, a contagem de registros no banco de testes deve ser idêntica à contagem inicial (zero resíduos).

@@ -1,13 +1,12 @@
 import React from 'react';
 import type { Pet } from '../types';
-import { User, Maximize2 } from 'lucide-react';
+import { User } from 'lucide-react';
 
 interface PetListItemProps {
   pet: Pet;
   isSelected: boolean;
   photoUrl: string;
   onSelect: (petId: number) => void;
-  onExpandPhoto: (pet: Pet) => void;
 }
 
 export const PetListItem: React.FC<PetListItemProps> = ({
@@ -15,7 +14,6 @@ export const PetListItem: React.FC<PetListItemProps> = ({
   isSelected,
   photoUrl,
   onSelect,
-  onExpandPhoto,
 }) => {
   return (
     <div
@@ -27,31 +25,17 @@ export const PetListItem: React.FC<PetListItemProps> = ({
           : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
       }`}
     >
-      {/* Foto/Avatar com botão de zoom */}
+      {/* Foto/Avatar */}
       <div className="flex items-center gap-3 min-w-0">
-        <div
-          role="button"
-          title="Clique para expandir a foto do paciente"
-          onClick={(e) => {
-            e.stopPropagation();
-            onExpandPhoto(pet);
-          }}
-          className="relative w-10 h-10 shrink-0 rounded-lg overflow-hidden border border-slate-200 hover:border-emerald-500 hover:ring-2 hover:ring-emerald-400/40 transition-all cursor-zoom-in group/avatar shadow-2xs"
-        >
+        <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden border border-slate-200 shadow-2xs">
           <img
             src={photoUrl}
             alt={`Foto de ${pet.name}`}
-            className="w-full h-full object-cover group-hover/avatar:scale-110 transition-transform duration-200"
+            className="w-full h-full object-cover"
             onError={(e) => {
               (e.currentTarget as HTMLElement).style.display = 'none';
             }}
           />
-          <div className="absolute inset-0 bg-slate-900/0 group-hover/avatar:bg-slate-900/30 flex items-center justify-center transition-all">
-            <Maximize2
-              size={13}
-              className="text-white opacity-0 group-hover/avatar:opacity-100 transition-opacity drop-shadow-md"
-            />
-          </div>
         </div>
 
         {/* Informações do Paciente */}

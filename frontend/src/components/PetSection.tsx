@@ -1,14 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import type { Pet } from '../types';
-import { PetPhotoModal } from './PetPhotoModal';
 import { PetCreateForm } from './PetCreateForm';
 import { PetListItem } from './PetListItem';
-import { 
-  PawPrint, 
-  Plus, 
-  Search, 
-  ChevronLeft, 
-  ChevronRight 
+import {
+  PawPrint,
+  Plus,
+  Search,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 interface PetSectionProps {
@@ -35,7 +34,6 @@ export const PetSection: React.FC<PetSectionProps> = ({
   const [showNewForm, setShowNewForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [expandedPet, setExpandedPet] = useState<Pet | null>(null);
 
   const filteredPets = useMemo(() => {
     if (!searchTerm.trim()) return pets;
@@ -132,7 +130,6 @@ export const PetSection: React.FC<PetSectionProps> = ({
               isSelected={selectedPetId === p.id}
               photoUrl={getPetPhotoUrl(p.id)}
               onSelect={onSelectPet}
-              onExpandPhoto={setExpandedPet}
             />
           ))
         )}
@@ -167,13 +164,7 @@ export const PetSection: React.FC<PetSectionProps> = ({
         </div>
       )}
 
-      {/* Modal Lightbox de Foto Expandida */}
-      <PetPhotoModal
-        pet={expandedPet}
-        photoUrl={expandedPet ? getPetPhotoUrl(expandedPet.id) : ''}
-        onClose={() => setExpandedPet(null)}
-        onSelectPet={onSelectPet}
-      />
+
     </div>
   );
 };

@@ -120,7 +120,7 @@ Fase 12: Revisão Final de Conformidade & Frontend SPA (Bônus)
 * Decisão de usar banco de dados real PostgreSQL (`vetglobal_test`), descartando SQLite para evitar falsos positivos de tipos e transações.
 * Sobrescrita de configurações no `conftest.py` para testes rápidos (`POLL_TIMEOUT_SECONDS=2`).
 * Criação da fixture `pet_tracker` com limpeza automática em cascata entre testes.
-* Cobertura completa de 44 testes automatizados cobrindo:
+* Cobertura completa de 48 testes automatizados cobrindo:
   * Happy paths de todos os endpoints.
   * Validações de fronteira (boundary testing de 10 MB e inputs negativos).
   * Tratamento de erros (404, 409, 413, 415, 422).

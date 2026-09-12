@@ -2,11 +2,11 @@
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-import type { 
-  Pet, 
-  DocumentUploadResult, 
-  DocumentDetails, 
-  JobCompleteResult 
+import type {
+  Pet,
+  DocumentUploadResult,
+  DocumentDetails,
+  JobCompleteResult
 } from '../types';
 
 export type { Pet, DocumentUploadResult, DocumentDetails, JobCompleteResult };
