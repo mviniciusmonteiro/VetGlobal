@@ -10,7 +10,7 @@ O desenvolvimento seguiu a metodologia **Risk-First / Walking Skeleton**:
 
 1. **Prioridade para o fluxo ponta a ponta:** Construir primeiro a espinha dorsal da aplicação (Pet → Upload → Job → Worker → Polling → Resposta).
 2. **Stateless por design:** Nenhuma camada retém estado de processamento em memória; o PostgreSQL atua como fonte única da verdade.
-3. **Complexidade sob demanda:** Evitar introduzir ferramentas distribuídas pesadas (RabbitMQ, Redis, Celery, S3) quando o escopo do desafio é atendido com maior robustez e menor custo operacional via PostgreSQL bem estruturado.
+3. **Complexidade sob demanda:** Evitar introduzir ferramentas distribuídas pesadas (RabbitMQ, Redis, Celery, S3) quando os requisitos de negócio são atendidos com máxima robustez, garantias transacionais e menor custo operacional via PostgreSQL bem estruturado.
 4. **Validação orientada a testes:** Cada nova funcionalidade é entregue acompanhada de testes unitários e de integração contra banco de dados real.
 
 ---
@@ -96,6 +96,7 @@ Fase 12: Revisão Final de Conformidade & Frontend SPA (Bônus)
   * Se o worker retransmitir o mesmo status terminal para um job já concluído, a API retorna `200 OK` como operação neutra (no-op), protegendo contra retries de rede.
   * Se o worker tentar transicionar um job terminal para um status divergente (ex: `DONE` para `FAILED`), a API rejeita com `409 Conflict`.
 * Suporte a payloads parciais do worker (campos `summary` e `error` opcionais sem quebrar contratos).
+* **Lock Pessimista (`with_for_update`):** Consulta do Job protegida com `SELECT ... FOR UPDATE`, serializando chamadas concorrentes de workers diretamente no PostgreSQL.
 
 ### Fase 7 — Consulta de Documentos & Observabilidade
 * Implementação da rota `GET /documents/{document_id}`.
@@ -120,11 +121,11 @@ Fase 12: Revisão Final de Conformidade & Frontend SPA (Bônus)
 * Decisão de usar banco de dados real PostgreSQL (`vetglobal_test`), descartando SQLite para evitar falsos positivos de tipos e transações.
 * Sobrescrita de configurações no `conftest.py` para testes rápidos (`POLL_TIMEOUT_SECONDS=2`).
 * Criação da fixture `pet_tracker` com limpeza automática em cascata entre testes.
-* Cobertura completa de 48 testes automatizados cobrindo:
+* Cobertura completa de 50 testes automatizados cobrindo:
   * Happy paths de todos os endpoints.
   * Validações de fronteira (boundary testing de 10 MB e inputs negativos).
   * Tratamento de erros (404, 409, 413, 415, 422).
-  * Concorrência real via `asyncio.gather` (disparo simultâneo de poll e conclusão de worker).
+  * Concorrência real via `asyncio.gather` (desbloqueio reativo do polling e serialização transacional do Lock Pessimista com `with_for_update`).
 
 ### Fase 10 — Infraestrutura Docker & Compose
 * Construção de `Dockerfile` multi-stage para backend Python.

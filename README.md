@@ -17,7 +17,7 @@ O sistema recebe cadastros e arquivos de prontuários clínicos, cria tarefas de
 | Validação | Pydantic v2 | >= 2.6 |
 | Testes | Pytest + httpx + pytest-asyncio | >= 8.1 |
 | Containerização | Docker Compose | v2 |
-| Frontend (Bônus) | React + Vite + TypeScript | — |
+| Frontend (Bônus) | React + Vite + TypeScript | SPA com Simulador de Worker interativo |
 
 ---
 
@@ -46,52 +46,90 @@ Acessos disponíveis:
 
 ---
 
-### 2. Execução Local (Alternativa)
+### 2. Execução Local Completa (Backend + Frontend)
+
+Para executar os serviços localmente no seu ambiente de desenvolvimento:
 
 #### Pré-requisitos
-* Python 3.11+
-* PostgreSQL ativo e rodando
+* **Python 3.11+**
+* **Node.js 18+** e **npm**
+* **PostgreSQL ativo e rodando localmente**
 
-#### Instalação
+---
+
+#### Passo 1: Banco de Dados (PostgreSQL)
+
+Certifique-se de que o serviço do PostgreSQL esteja ativo e crie a base de dados para a aplicação:
+
+```sql
+CREATE DATABASE vetglobal;
+```
+*(Opcional: para executar os testes automatizados localmente, crie também a base `CREATE DATABASE vetglobal_test;`)*
+
+---
+
+#### Passo 2: Backend (FastAPI)
+
+1. **Clone o repositório e acesse a raiz:**
+   ```bash
+   git clone https://github.com/mviniciusmonteiro/VetGlobal.git
+   cd VetGlobal
+   ```
+
+2. **Crie e ative o ambiente virtual:**
+   ```bash
+   # No Windows (PowerShell):
+   python -m venv venv
+   .\venv\Scripts\activate
+
+   # No Linux/Mac:
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+3. **Instale as dependências:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Configure o arquivo `.env`:**
+   Crie um arquivo `.env` na raiz do projeto (baseando-se no `.env.example`) com suas credenciais do PostgreSQL local:
+   ```env
+   APP_NAME=VetGlobal
+   ENVIRONMENT=development
+   DEBUG=True
+
+   DATABASE_URL=postgresql://postgres:sua_senha@localhost:5432/vetglobal
+
+   POLL_TIMEOUT_SECONDS=25
+   POLL_INTERVAL_SECONDS=1
+   ```
+
+5. **Inicie o servidor da API:**
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+   > A API estará rodando em **[http://localhost:8000](http://localhost:8000)** e a documentação interativa em **[http://localhost:8000/docs](http://localhost:8000/docs)**.
+
+---
+
+#### Passo 3: Frontend (React + Vite)
+
+Em um novo terminal, acesse a pasta `frontend` e execute:
 
 ```bash
-# Clone o repositório
-git clone https://github.com/mviniciusmonteiro/VetGlobal.git
-cd VetGlobal
-
-# Crie e ative o ambiente virtual
-# No Windows:
-python -m venv venv
-.\venv\Scripts\activate
-
-# No Linux/Mac:
-python3 -m venv venv
-source venv/bin/activate
+# Acesse o diretório do frontend
+cd frontend
 
 # Instale as dependências
-pip install -r requirements.txt
+npm install
+
+# Inicie o servidor de desenvolvimento
+npm run dev
 ```
 
-#### Configuração do Ambiente
-
-Crie um arquivo `.env` na raiz do projeto com base no `.env.example`:
-
-```env
-APP_NAME=VetGlobal
-ENVIRONMENT=development
-DEBUG=True
-
-DATABASE_URL=postgresql://postgres:sua_senha@localhost:5432/vetglobal
-
-POLL_TIMEOUT_SECONDS=25
-POLL_INTERVAL_SECONDS=1
-```
-
-#### Iniciar o Servidor
-
-```bash
-uvicorn app.main:app --reload
-```
+> A interface web estará acessível em **[http://localhost:5173](http://localhost:5173)**.  
+> Para mais detalhes sobre a interface, consulte o [README do Frontend](frontend/README.md).
 
 ---
 
@@ -107,37 +145,23 @@ docker compose run --rm test
 
 ### Estratégia de Testes
 
-**Banco real, não SQLite.** Todos os testes rodam contra um **PostgreSQL real** (banco `vetglobal_test`), não SQLite em memória. SQLite não reproduz fielmente comportamentos de locks, tipos e concorrência do PostgreSQL — testar contra o mesmo banco de produção evita surpresas.
+* **PostgreSQL Real (`vetglobal_test`):** Todos os testes rodam contra uma instância real de banco, garantindo fidelidade total de tipos (`BYTEA`), constraints e isolamento transacional *(detalhes no [Trade-off 4](#4-testes-automatizados-postgresql-real-vs-sqlite-em-memória))* .
+* **Polling acelerado em testes:** O `conftest.py` sobrescreve os tempos para `POLL_TIMEOUT_SECONDS=2` e `POLL_INTERVAL_SECONDS=0.1`, garantindo que os 50 testes rodem em ~10 segundos sem modificar a lógica da API.
+* **Concorrência real:** Testes assíncronos com `asyncio.gather` e `httpx.AsyncClient` disparam simultaneamente requisições de polling e callbacks de worker para certificar que o polling desbloqueia reativamente.
+* **Isolamento de dados:** Cada teste registra seus IDs na fixture `pet_tracker`, que executa deleção em cascata (`Pet → Document → Job`) no teardown, garantindo zero contaminação entre testes.
 
-**Polling rápido nos testes.** O timeout de 25s tornaria a suíte lenta. O `conftest.py` sobrescreve para `POLL_TIMEOUT_SECONDS=2` e `POLL_INTERVAL_SECONDS=0.1`, garantindo testes rápidos sem alterar a lógica.
-
-**Concorrência real.** Os testes de polling concorrente usam `asyncio.gather` com `httpx.AsyncClient` para disparar simultaneamente uma requisição de poll e uma chamada do worker, validando que o poll é desbloqueado corretamente.
-
-**Isolamento.** Cada teste cria seus próprios dados e registra os IDs via fixture `pet_tracker`. No teardown, a fixture executa deleção em cascata (`Pet → Document → Job`) garantindo que nenhum dado persista entre testes.
-
-### Cobertura de Testes (48 testes)
+### Cobertura de Testes (50 testes)
 
 | Categoria | Qtd | O que cobrem |
 |-----------|-----|-------------|
-| **Health** | 1 | Verificação de integridade |
-| **Database** | 2 | Conexão, lifecycle completo (Pet→Doc→Job), cascade delete |
-| **Pets** | 9 | Criação, validação, GET, 404, listagem, paginação, pet com documents |
-| **Documents** | 25 | Upload .txt/.pdf, extensões inválidas (415), pet inexistente (404), arquivo grande (413), arquivo vazio (422), boundary 10 MB, deduplicação SHA-256 e idempotência (PENDING/READY/FAILED/diferentes pets), GET por status, upload sem arquivo, fluxo ponta-a-ponta |
-| **Jobs** | 10 | DONE/FAILED, 404, idempotência, conflito de estado (409), status inválido (422), DONE sem summary, FAILED sem error |
-| **Polling** | 6 | Retorno imediato, conclusão concorrente (DONE/FAILED), timeout 204, condição `after_job_id`, input negativo (422), documento inexistente (404) |
+| **Health** | 1 | Verificação de integridade da API (`GET /health`) |
+| **Database** | 2 | Conexão física com PostgreSQL, integridade relacional (`Pet → Document → Job`) e cascade delete |
+| **Pets** | 10 | Criação com sucesso, sanitização de strings, validações de campos vazios/obrigatórios (422), consulta por ID (200/404), listagem geral, paginação (`skip`/`limit`) e integridade com documentos vinculados |
+| **Documents** | 18 | Upload `.txt`/`.pdf`, extensões não suportadas (415), pet inexistente (404), arquivo > 10 MB (413), boundary exato de 10 MB (202), arquivo vazio (422), payload sem arquivo (422), múltiplos uploads, consultas de status (`PENDING`/`READY`/`FAILED`), deduplicação SHA-256 com idempotência transparente e isolamento estrito entre pets |
+| **Polling** | 7 | Retorno imediato quando já concluído, conclusão concorrente via `asyncio.gather` (`DONE`/`FAILED`), timeout 204 No Content, filtro condicional `after_job_id`, validação de input negativo (422) e 404 imediato para documento inexistente |
+| **Jobs** | 12 | Conclusão normal (`DONE`/`FAILED`), job inexistente (404), idempotência sequencial e concorrente (*first write wins*) com Lock Pessimista (`with_for_update`), rejeição de conflito de estado (409), status inválido (422) e tolerância a payloads parciais |
 
-### Categorias de Teste
-
-* **Happy Path** — fluxo principal funciona corretamente
-* **Error Handling** — códigos HTTP previsíveis (404, 409, 413, 415, 422) sem 500
-* **Idempotência** — chamadas duplicadas ao worker e reenvio de arquivos idênticos retornam 200/202 sem duplicar processamento ou bytes no banco
-* **Conflito de Estado** — transições proibidas (DONE→FAILED) retornam 409
-* **Boundary Testing** — arquivo exatamente no limite de 10 MB
-* **Edge Cases** — payloads incompletos do worker
-* **Concorrência** — poll + worker simultâneo via `asyncio.gather`
-* **Fluxo Ponta-a-Ponta** — criar pet → upload → worker → consulta com observabilidade
-
-Para a especificação detalhada de cada caso de teste, cenários negativos e critérios de qualidade, consulte o [Plano de Testes](docs/plano_de_testes.md).
+A suíte abrange testes de *Happy Path*, limites (*Boundary Testing* de 10 MB), concorrência real (`asyncio.gather`), resiliência a falhas (sem nenhum `500`), idempotência transacional e fluxos ponta-a-ponta completos. Para a especificação detalhada de cada caso de teste e cenários avaliados, consulte o [Plano de Testes](docs/plano_de_testes.md).
 
 ---
 
@@ -237,6 +261,11 @@ O fluxo de processamento simula o pipeline real da VetGlobal:
 
 O banco PostgreSQL é a **única fonte de verdade** do estado de processamento. Nenhuma instância da API retém estado em memória — o design é 100% stateless.
 
+> [!TIP]
+> **Como testar o fluxo assíncrono na prática:**
+> * **Visualmente (Recomendado):** Acesse a interface web em [http://localhost:5173](http://localhost:5173). Ela possui um **Simulador de Worker** integrado que permite realizar o upload, observar o long polling em tempo real e disparar a conclusão (`DONE` com laudo) ou falha (`FAILED`) com um único clique.
+> * **Via Linha de Comando:** Siga os comandos ponta a ponta prontos no [Guia de Execução via cURL](docs/guia_de_execucao_curl.md).
+
 ---
 
 ## Endpoints da API
@@ -253,7 +282,7 @@ O banco PostgreSQL é a **única fonte de verdade** do estado de processamento. 
 
 | Método | Rota | Descrição | Status |
 |--------|------|-----------|--------|
-| `POST` | `/pets/{pet_id}/documents` | Upload de documento (.txt/.pdf, ≤ 10 MB) | 202 Accepted |
+| `POST` | `/pets/{pet_id}/documents` | Upload de documento (.txt/.pdf, ≤ 10 MB) com deduplicação | 202 / 200 |
 | `GET` | `/documents/{document_id}` | Consultar estado e resultado do documento | 200 / 404 |
 | `GET` | `/documents/{document_id}/poll?after_job_id=0` | Long polling (até 25s) | 200 / 204 / 404 |
 
@@ -302,21 +331,13 @@ Documento existe? ──── Não ──► 404 Not Found (imediato)
 204 No Content
 ```
 
-### Decisões técnicas do polling
+### Mecânica de Execução & Comportamento HTTP
 
-**Por que `204 No Content` no timeout (e não `200 null`)?**
-O `204` comunica semanticamente que "não há conteúdo para retornar" sem ambiguidade. O cliente distingue facilmente timeout (204) de resultado (200) sem inspecionar o body.
+* **Semântica de Timeout (`204 No Content` vs `200 null`):** O status `204` comunica explicitamente que o tempo de espera expirou sem conclusão, dispensando o cliente de inspecionar o corpo da resposta para distinguir entre timeout e dados prontos.
+* **Prevenção de Threadpool Starvation (`async def` + `run_in_threadpool`):** O loop de espera é suspenso no Event Loop (`await asyncio.sleep`), sem reter threads do sistema operacional. As queries do SQLAlchemy são despachadas via `run_in_threadpool` apenas pelos milissegundos pontuais do `SELECT`.
+* **Invalidação do Cache L1 do ORM (`db.expire_all()`):** O SQLAlchemy retém instâncias no seu *Identity Map* em memória. A chamada explícita a `db.expire_all()` a cada iteração força a leitura do estado fresco commitado pelo worker no PostgreSQL, prevenindo falsos timeouts.
 
-**Por que polling no banco e não `asyncio.Event()` em memória?**
-Estruturas em memória quebram em arquitetura multi-instância. Se o `POST /internal/jobs/{id}/complete` é processado na Instância B e o `GET .../poll` aguarda na Instância A, a Instância A nunca seria notificada. O PostgreSQL é a única fonte de verdade compartilhada.
-
-**Por que `async def` + `run_in_threadpool` (e não rota síncrona)?**
-Em rotas síncronas (`def`) com `time.sleep()`, cada requisição de poll prenderia uma thread do threadpool por até 25s. Com o pool padrão de ~40 threads, apenas 40 clientes simultâneos congelariam a API inteira. A solução:
-- `async def` → a espera é suspensa no Event Loop (`await asyncio.sleep`), sem consumir threads
-- `run_in_threadpool` → a query síncrona do SQLAlchemy pega uma thread apenas pelos milissegundos do `SELECT`
-
-**Evolução para produção:**
-Em escala massiva, a evolução recomendada é substituir o polling por `LISTEN/NOTIFY` do PostgreSQL ou WebSockets, eliminando as queries periódicas.
+> *(Para a análise comparativa de arquitetura sob múltiplas instâncias entre Long Polling, `asyncio.Event()` e WebSockets, consulte a seção [Trade-offs Técnicos](#3-estratégia-de-polling-long-polling-no-banco-vs-asyncioevent-vs-websockets)).*
 
 ---
 
@@ -338,10 +359,9 @@ Worker envia status X para Job J
   └── J já terminal E status DIFERENTE
         → Rejeita. Retorna 409 Conflict.
 ```
-
 **Cenário real:** Se a rede cai após o worker enviar DONE mas antes de receber o 200, ele reenvia. A segunda chamada retorna 200 sem alterar dados — o worker fica satisfeito sem duplicar efeitos.
 
-**Nota sobre concorrência:** A implementação não usa `SELECT ... FOR UPDATE` (lock pessimista). Em um sistema com um único worker por job, isso é aceitável. Em produção com workers concorrentes, seria necessário lock pessimista ou optimistic locking com coluna de versão.
+**Concorrência segura:** O endpoint aplica **Lock Pessimista (`SELECT ... FOR UPDATE`)** via `with_for_update()`, serializando finalizações concorrentes no PostgreSQL antes de validar as transições *(veja a defesa do Lock Pessimista frente ao Lock Otimista no [Trade-off 1](#1-concorrência-de-workers-lock-pessimista-with_for_update-vs-lock-otimista))* .
 
 ### Upload de Documentos e Deduplicação por Hash SHA-256
 
@@ -370,76 +390,54 @@ Exceções de domínio customizadas (`PetNotFoundError`, `FileSizeExceededError`
 
 ---
 
-## Decisões Técnicas e Trade-offs
+## Trade-offs Técnicos & Decisões de Engenharia
 
-### Armazenamento de Arquivos: BYTEA no PostgreSQL
+Toda decisão de arquitetura em sistemas distribuídos envolve compromissos (*trade-offs*). As principais escolhas técnicas do projeto foram desenhadas para equilibrar robustez, simplicidade de execução e fidelidade a padrões de produção:
 
-| Decisão | Justificativa |
-|---------|---------------|
-| Arquivos armazenados como `BYTEA` no PostgreSQL (≤ 10 MB) | API 100% stateless — múltiplas instâncias compartilham o mesmo storage sem volumes NFS/EFS |
-| Arquivo + metadados na mesma transação (ACID) | Sem risco de arquivos órfãos em disco se o commit falhar |
-| Alinhado ao design stateless do polling | Fonte única de verdade no PostgreSQL |
-| **Trade-off** | Em produção com arquivos grandes (vídeos, imagens de alta resolução), migraria para S3/GCS com URLs pré-assinadas |
+### 1. Concorrência de Workers: Lock Pessimista (`with_for_update`) vs. Lock Otimista
+* **Decisão:** O endpoint `/internal/jobs/{id}/complete` utiliza `SELECT ... FOR UPDATE` diretamente no PostgreSQL para travar a linha do Job durante a transição de estado.
+* **Por quê:** Garante que callbacks simultâneos de workers (ou retries rápidos após timeout de rede) sejam serializados no banco com isolamento transacional estrito. Isso assegura idempotência (*first write wins*) e impede transições conflitantes (retornando `409 Conflict` deterministicamente).
+* **Trade-off assumido:** Locks de linha prendem recursos da conexão durante a transação; por isso, a lógica do endpoint foi mantida estritamente enxuta e sem chamadas bloqueantes de rede para liberar o lock em poucos milissegundos.
 
-### Simulação da Fila: Banco como Fonte de Verdade
+### 2. Armazenamento de Binários: `BYTEA` no PostgreSQL vs. Object Storage (S3)
+* **Decisão:** Os arquivos clínicos (≤ 10 MB) são persistidos diretamente na coluna `BYTEA` da tabela `documents`.
+* **Por quê:** Garante **atomicidade ACID pura**: o arquivo, o registro do documento e o job de processamento são gravados na mesma transação. Se qualquer validação falhar, o rollback é instantâneo e não há risco de arquivos órfãos. Além disso, torna o repositório 100% autocontido no Docker, sem depender de mocks locais de S3 (como LocalStack) ou credenciais de nuvem externa.
+* **Trade-off assumido:** Armazenar arquivos volumosos no PostgreSQL aumenta o consumo do *Buffer Pool* (RAM) do banco. Em ambiente de alta escala com arquivos pesados, a evolução padrão é delegar o upload diretamente ao **AWS S3 / Cloudflare R2** via *Presigned URLs*.
 
-O banco PostgreSQL representa o estado do processamento assíncrono. Não foi utilizada uma fila real (Redis, RabbitMQ, SQS). A transição de estados do Job (`ENQUEUED → DONE/FAILED`) ocorre via endpoint `/internal/jobs/{id}/complete`, que simula o callback de um worker.
+### 3. Estratégia de Polling: Long Polling no Banco vs. `asyncio.Event()` vs. WebSockets
+* **Decisão:** Implementação de Long Polling com `async def`, suspensão no Event Loop (`await asyncio.sleep`) e consultas pontuais no banco via `run_in_threadpool`.
+* **Por quê:** A API é **100% Stateless**. Estruturas de sincronização em memória (como `asyncio.Event` ou dicionários globais) quebram imediatamente se a aplicação rodar com múltiplos pods ou réplicas atrás de um Load Balancer, pois o evento ficaria confinado à memória de um único processo. O PostgreSQL atua como fonte centralizada de verdade.
+* **Trade-off assumido:** Gera consultas periódicas ao banco durante a espera; em produção com centenas de milhares de conexões abertas, o polling deve ser substituído por uma arquitetura reativa (*Event-Driven*) com **PostgreSQL `LISTEN/NOTIFY`** ou **WebSockets / SSE** via Redis Pub/Sub.
 
-Incompatível com múltiplas instâncias da API:
-```python
-# Exemplo que quebraria com múltiplas instâncias da API
-jobs = {}  # estado perdido entre réplicas
-asyncio.Event()  # evento local, invisível para outras instâncias
-```
+### 4. Testes Automatizados: PostgreSQL Real vs. SQLite em Memória
+* **Decisão:** Toda a suíte de testes (50 testes) executa contra um **PostgreSQL real** (`vetglobal_test`), tanto localmente quanto no container Docker.
+* **Por quê:** SQLite não suporta locks de linha (`with_for_update`), não reproduz o isolamento transacional concorrente do PostgreSQL e difere na tipagem binária (`BYTEA`). Testar contra o mesmo motor de produção evita surpresas e garante que a concorrência real funcione.
+* **Trade-off assumido:** Exige o serviço do PostgreSQL ativo para rodar os testes e pequena latência adicional de I/O, compensada pela fixture `pet_tracker` com limpeza em cascata rápida e redução dos intervalos de polling em tempo de teste (`conftest.py`).
 
-**Trade-off:** Em produção, utilizaria uma fila real (SQS, RabbitMQ) com workers consumindo mensagens e chamando o endpoint de completion.
+### 5. Gestão de Schema: `create_all()` no Lifespan vs. Migrações (Alembic)
+* **Decisão:** Criação automatizada de tabelas via `Base.metadata.create_all()` no startup da aplicação.
+* **Por quê:** Proporciona experiência de avaliação imediata ("clone and run") sem exigir comandos adicionais de migração manual na primeira inicialização.
+* **Trade-off assumido:** Não suporta alterações incrementais de colunas nem rollback de schema em produção contínua, onde o versionamento formal com **Alembic** acoplado ao pipeline de CI/CD (padrão *Expand/Contract*) é indispensável.
 
-### Estado `PROCESSING` — Por que não é usado
-
-O modelo `Job` define o estado `PROCESSING`, mas o fluxo atual transiciona direto de `ENQUEUED` para `DONE/FAILED`. Isso é intencional: como o worker é simulado por um callback HTTP (não há um worker real consumindo uma fila), não existe o momento de "pegar o job" que marcaria `PROCESSING`. O estado está modelado para extensibilidade futura com workers reais.
-
-### Payloads Opcionais no Worker
-
-O worker pode enviar `DONE` sem `summary` ou `FAILED` sem `error`. Ambos os campos são `Optional` no schema. A API aceita esses casos porque:
-- O contrato é do worker — forçar campos quebraria retries parciais
-- Em produção, adicionaria warning logs para monitoramento de qualidade dos dados
-
----
-
-## Access Control e Tenant Isolation
-
-**Não implementado** (fora do escopo do projeto).
-
-Em produção, a abordagem seria:
-- Adicionar `tenant_id` como FK em `Pet` e `Document`, extraído de um JWT no middleware
-- Filtrar todas as queries por `tenant_id` para garantir isolamento
-- Proteger o endpoint `/internal/jobs/{id}/complete` com API key ou service mesh interno, impedindo acesso público
+### 6. Observabilidade Nativa sem Ferramentas Externas
+* **Decisão:** Registro explícito de `completed_at` no Job e cálculo em tempo de consulta de `duration_ms` exposto no contrato de `GET /documents/{id}`.
+* **Por quê:** Disponibiliza métricas de SLA e tempo de resposta diretamente para o frontend e clientes da API sem a sobrecarga operacional de configurar agentes de APM ou tracing distribuído (OpenTelemetry/Jaeger) no escopo inicial.
 
 ---
 
-## Observabilidade
+## Delimitação de Escopo & Roadmap de Produção (Intencionalmente Fora do Escopo)
 
-O campo `completed_at` no modelo `Job` registra o timestamp UTC de conclusão. Com base nele, o response de `GET /documents/{id}` expõe:
+A estratégia de desenvolvimento priorizou o pipeline assíncrono de ponta a ponta com banco real e testes rigorosos de concorrência, mantendo a base de código enxuta e desacoplada para evolução contínua:
 
-- `completed_at` — quando o processamento terminou
-- `duration_ms` — duração total do processamento em milissegundos (`completed_at - created_at`)
-
-Esses campos permitem monitorar a latência dos jobs e detectar degradação de performance sem necessidade de ferramentas externas de tracing.
-
----
-
-## Intencionalmente Fora do Escopo
-
-| Item | Motivo |
-|------|--------|
-| Autenticação e autorização | Não requerido pelo enunciado. Documentada abordagem futura |
-| Multi-tenancy | Documentada abordagem futura (tenant_id + JWT) |
-| Fila real (Redis/RabbitMQ/SQS) | Banco como fonte de verdade é suficiente para o escopo |
-| LLM real para sumarização | Worker simulado via callback HTTP |
-| Object Storage (S3/GCS) | BYTEA ≤ 10 MB atende ao escopo com atomicidade ACID |
-| Alembic Migrations | `create_all()` no lifespan é suficiente para demonstração |
-| Kubernetes / Distributed Tracing | Fora do escopo operacional |
-| LISTEN/NOTIFY do PostgreSQL | Polling no banco é documentado como trade-off |
+| Componente | Decisão Estratégica no Projeto (Escopo Atual) | Arquitetura Alvo no Roadmap de Produção |
+| :--- | :--- | :--- |
+| **Autenticação & RBAC** | Não implementado | Middleware JWT/OAuth2 com controle de acesso baseado em papéis (*Role-Based Access Control*) |
+| **Multi-tenancy** | Modelagem relacional direta e simplificada por paciente | Adição de `tenant_id` em todas as tabelas com *Row-Level Security* (RLS) no PostgreSQL |
+| **Broker de Mensageria** | PostgreSQL como fonte única da verdade (zero dependência externa) | Desacoplamento via **AWS SQS / RabbitMQ / Celery** com Dead-Letter Queues (DLQ) |
+| **Processamento de IA** | Callback determinístico via webhook interno para simulação e testes | Worker assíncrono com OCR e sumarização via LLMs (OpenAI, Claude ou Gemini) |
+| **Armazenamento de Binários** | Coluna `BYTEA` (≤ 10 MB) com atomicidade transacional pura | Upload direto para **AWS S3 / Cloudflare R2** via Presigned URLs |
+| **Migrações de Schema** | `Base.metadata.create_all()` no ciclo de vida da aplicação | Versionamento formal de schema com **Alembic** integrado ao pipeline de CI/CD |
+| **Comunicação Reativa** | Long Polling stateless compatível com qualquer cliente HTTP | Arquitetura *Event-Driven* via **WebSockets / SSE** ou **PostgreSQL `LISTEN/NOTIFY`** |
 
 ---
 
@@ -447,7 +445,7 @@ Esses campos permitem monitorar a latência dos jobs e detectar degradação de 
 
 Para uma análise aprofundada da arquitetura, do plano de desenvolvimento, testes e exemplos via terminal, consulte os documentos detalhados na pasta `docs/`:
 
-* [Plano de Testes](docs/plano_de_testes.md) — Matriz formal dos 48 testes automatizados, estratégia de isolamento térmico (`pet_tracker`), concorrência real e critérios de aceite.
+* [Plano de Testes](docs/plano_de_testes.md) — Matriz formal dos 50 testes automatizados, estratégia de isolamento térmico (`pet_tracker`), concorrência real e critérios de aceite.
 * [Plano de Implementação & Matriz de Requisitos](docs/plano_de_implementacao.md) — Cronologia das 12 fases, metodologia de desenvolvimento iterativo e rastreabilidade de conformidade.
 * [Engenharia, Arquitetura e Decisões Técnicas](docs/engenharia_e_decisoes.md) — Prevenção de Threadpool Starvation, controle de cache L1 do Identity Map (`db.expire_all()`), persistência ACID em BYTEA, resiliência de pool e idempotência.
 * [Guia de Execução via cURL](docs/guia_de_execucao_curl.md) — Fluxo passo a passo de requisições prontas para teste rápido via linha de comando.

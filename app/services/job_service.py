@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, Tuple
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models.job import Job
 from app.models.document import Document
@@ -71,7 +72,9 @@ def complete_job(
          - FAILED: Document status = FAILED, preenche error, limpa summary.
        - Comita a transação no PostgreSQL e atualiza as instâncias.
     """
-    job = db.get(Job, job_id)
+    # Consulta com Lock Pessimista (FOR UPDATE) para serializar transições concorrentes
+    stmt = select(Job).where(Job.id == job_id).with_for_update()
+    job = db.scalar(stmt)
     if not job:
         raise JobNotFoundError(f"Job com id {job_id} não encontrado.")
 

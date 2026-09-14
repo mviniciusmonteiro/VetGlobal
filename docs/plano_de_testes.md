@@ -1,12 +1,12 @@
 # Plano de Testes — VetGlobal Backend
 
-Este documento estabelece a estratégia formal de testes, a arquitetura do ambiente de testes, a matriz de cobertura dos 48 testes automatizados e os critérios de qualidade adotados no projeto **VetGlobal**.
+Este documento estabelece a estratégia formal de testes, a arquitetura do ambiente de testes, a matriz de cobertura dos 50 testes automatizados e os critérios de qualidade adotados no projeto **VetGlobal**.
 
 ---
 
 ## 1. Objetivos do Plano de Testes
 
-* **Garantir a Correção Funcional:** Validar que todos os 5 fluxos principais da API (Health, Pets, Upload de Documentos, Jobs Assíncronos e Long Polling) atendem estritamente aos requisitos do enunciado.
+* **Garantir a Correção Funcional:** Validar que todos os 5 fluxos principais da API (Health, Pets, Upload de Documentos, Jobs Assíncronos e Long Polling) atendem estritamente aos requisitos funcionais e às especificações técnicas do sistema.
 * **Prevenir Regressões e Efeitos Colaterais:** Assegurar que alterações na camada de persistência ou nos contratos HTTP não quebrem fluxos existentes.
 * **Validar Concorrência e Condições de Corrida:** Demonstrar que o mecanismo de Long Polling é reativo e desbloqueia corretamente sob requisições paralelas sem bloquear o Event Loop ou o pool de threads.
 * **Garantir Previsibilidade no Tratamento de Erros:** Certificar que nenhuma falha de validação ou exceção de domínio resulte em `500 Internal Server Error`, retornando os status codes HTTP semânticos (404, 409, 413, 415, 422).
@@ -37,7 +37,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 * A fixture de ambiente no `tests/conftest.py` sobrescreve as variáveis:
   * `POLL_TIMEOUT_SECONDS = 2` (em vez de 25s)
   * `POLL_INTERVAL_SECONDS = 0.1` (em vez de 0.5s)
-* **Resultado:** Os 48 testes automatizados rodam em **menos de 10 segundos**, mantendo a mesma semântica do código em produção.
+* **Resultado:** Os 50 testes automatizados rodam em **menos de 10 segundos**, mantendo a mesma semântica do código em produção.
 
 ---
 
@@ -66,7 +66,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 
 ---
 
-## 4. Matriz Detalhada de Casos de Teste (48 Testes)
+## 4. Matriz Detalhada de Casos de Teste (50 Testes)
 
 ### 4.1. Camada de Banco de Dados (`tests/test_database.py` — 2 testes)
 
@@ -75,7 +75,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 | DB-01 | `test_database_connection` | Conexão física com PostgreSQL de testes | Sessão abre e executa `SELECT 1` com sucesso |
 | DB-02 | `test_pet_document_job_lifecycle` | Criação relacional `Pet → Document → Job` e exclusão | Exclusão do Pet limpa Documentos e Jobs via cascade delete |
 
-### 4.2. Recurso de Pets (`tests/test_pets.py` — 9 testes)
+### 4.2. Recurso de Pets (`tests/test_pets.py` — 10 testes)
 
 | ID | Nome do Teste | Cenário Avaliado | Resultado Esperado |
 |----|---------------|------------------|--------------------|
@@ -120,7 +120,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 | DOC-24 | `test_upload_duplicate_after_failed_job_allows_retry` | Reenvio de arquivo idêntico após falha (`FAILED`) | HTTP 202 Accepted + novo `document_id` + novo `job_id` (retry liberado) |
 | DOC-25 | `test_upload_same_content_different_pets_allowed` | Upload do mesmo arquivo para pets diferentes | HTTP 202 Accepted para ambos (isolamento estrito entre pacientes) |
 
-### 4.4. Jobs e Simulação do Worker (`tests/test_jobs.py` — 10 testes)
+### 4.4. Jobs e Concorrência de Workers (`tests/test_jobs.py` — 12 testes)
 
 | ID | Nome do Teste | Cenário Avaliado | Resultado Esperado |
 |----|---------------|------------------|--------------------|
@@ -134,6 +134,8 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 | JOB-08 | `test_complete_job_invalid_status` | Status desconhecido enviado no payload | HTTP 422 Unprocessable Entity |
 | JOB-09 | `test_complete_job_done_without_summary` | Conclusão `DONE` sem envio de campo `summary` | HTTP 200 OK (campo opcional no contrato) |
 | JOB-10 | `test_complete_job_failed_without_error` | Conclusão `FAILED` sem envio de campo `error` | HTTP 200 OK (campo opcional no contrato) |
+| JOB-11 | `test_concurrent_complete_job_same_status_idempotent` | 5 requisições de conclusão simultâneas com `DONE` via `asyncio.gather` | HTTP 200 OK em todas (serializadas pelo Lock Pessimista `FOR UPDATE`, idempotência segura) |
+| JOB-12 | `test_concurrent_complete_job_conflicting_statuses` | Requisições conflitantes concorrentes (`DONE` vs `FAILED`) simultâneas | Exatamente 1 ganha o lock (200 OK) e 1 é rejeitada (409 Conflict); integridade preservada |
 
 ### 4.5. Monitoramento (`tests/test_health.py` — 1 teste)
 
@@ -147,7 +149,7 @@ O timeout padrão de 25 segundos do Long Polling tornaria a suíte inviável par
 
 Para considerar a suíte de testes aprovada para entrega de produção:
 
-1. **Taxa de Sucesso:** 100% dos testes aprovados (`48 passed, 0 failed, 0 errors`).
+1. **Taxa de Sucesso:** 100% dos testes aprovados (`50 passed, 0 failed, 0 errors`).
 2. **Tempo Total de Execução:** Menor que 15 segundos em ambiente local e conteinerizado.
 3. **Ausência de Erros 500:** Nenhum caso de teste negativo (dados corrompidos, tipos inválidos, arquivos gigantes) pode disparar exceção não tratada.
 4. **Isolamento de Dados:** Ao término da execução, a contagem de registros no banco de testes deve ser idêntica à contagem inicial (zero resíduos).

@@ -73,7 +73,7 @@ O comando `expire_all()` invalida todos os atributos carregados na sessão, for�
 | **Statelessness** | Total: compartilhado nativamente entre instâncias | Quebrado: exige volumes de rede compartilhados (NFS/EFS) | Total: storage centralizado desacoplado |
 | **Consistência ACID** | Total: arquivo, metadados e job gravados no mesmo commit | Inexistente: risco de arquivos órfãos se a rota falhar | Eventual: exige orquestração de rollback manual |
 | **Complexidade Operacional** | Zero: provisionado automaticamente pelo Docker Compose | Média: gerenciamento de permissões de diretório no container | Alta: exige credenciais IAM, buckets, mocks locais |
-| **Escopo do Desafio** | Ideal: arquivos até 10 MB | Não recomendado | Over-engineering para o contexto |
+| **Aderência ao Cenário Clínico** | Ideal: arquivos até 10 MB | Risco de inconsistência | Complexidade operacional prematura |
 
 ### Defesa Arquitetural
 Para documentos clínicos de texto e PDFs de até 10 MB, armazenar o conteúdo binário como `BYTEA` garante transações atômicas com integridade garantida pelo motor do PostgreSQL. Se a criação do `Job` falhar, o `db.rollback()` desfaz também a gravação do arquivo, evitando resíduos no armazenamento.
@@ -132,6 +132,11 @@ PROCESSING ───────┤             └── [Retry com DONE: 200 O
 Se um worker concluir o processamento com sucesso mas perder a conexão antes de receber o retorno HTTP da API, ele reenviará a requisição. A API detecta que o job já atingiu o estado `DONE` com o mesmo resultado e responde `200 OK` imediatamente, sem emitir escritas redundantes nem corromper dados.
 
 Caso receba uma instrução conflitante para um estado já consolidado (ex: um job `DONE` tentando ser alterado para `FAILED`), a API rejeita categoricamente a operação com `409 Conflict`.
+
+### Lock Pessimista (`SELECT ... FOR UPDATE`)
+Para prevenir race conditions caso callbacks concorrentes atinjam o endpoint simultaneamente para o mesmo identificador de job, a busca da entidade em `job_service.py` utiliza `select(Job).where(Job.id == job_id).with_for_update()`. 
+
+Isso estabelece um bloqueio exclusivo na linha correspondente no PostgreSQL, garantindo que o primeiro worker conclua sua transação e os demais sejam avaliados de forma serializada pela lógica de idempotência (confirmando sucesso neutro `200 OK` se o status for idêntico ou rejeitando com `409 Conflict` se for divergente).
 
 ---
 
@@ -215,4 +220,15 @@ Upload Recebido   │                          (Evita jobs concorrentes redundan
 
 ### Economia de Armazenamento e Recursos
 Com essa estratégia, nenhum byte binário redundante é gravado na coluna `BYTEA` do PostgreSQL quando um documento repetido em estado `PENDING` ou `READY` é detectado. O sistema mantém consistência transacional absoluta e devolve uma resposta perfeitamente previsível e idempotente ao cliente.
+
+### Evolução para Alta Concorrência: Índice Parcial Condicional
+Em cenários de altíssima concorrência simultânea entre nós de API (onde dois uploads milissegundos idênticos poderiam tentar criar registros ao mesmo tempo antes do commit), a proteção em nível de banco de dados é modelada através de um **Índice Parcial Condicional**:
+
+```sql
+CREATE UNIQUE INDEX uq_pet_active_doc_hash 
+ON documents (pet_id, file_hash) 
+WHERE status IN ('PENDING', 'READY');
+```
+
+Uma restrição de unicidade incondicional comum (`UniqueConstraint("pet_id", "file_hash")`) quebraria o requisito de negócio que permite ao usuário reenviar um arquivo cujo processamento anterior falhou (`status = 'FAILED'`). O índice condicional do PostgreSQL resolve ambos os requisitos simultaneamente: blinda a unicidade de documentos ativos e preserva a capacidade legítima de retentativa.
 

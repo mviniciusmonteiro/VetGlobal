@@ -1,4 +1,6 @@
+import asyncio
 import io
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -313,3 +315,82 @@ def test_complete_job_failed_without_error(pet_tracker) -> None:
         assert doc.error is None
     finally:
         db.close()
+
+
+# ==============================================================================
+# Testes de Concorrência Real: Validação do Lock Pessimista (SELECT ... FOR UPDATE)
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_concurrent_complete_job_same_status_idempotent(pet_tracker) -> None:
+    """Valida que múltiplas requisições simultâneas de conclusão com o mesmo status (DONE)
+    são serializadas via Lock Pessimista (FOR UPDATE) no PostgreSQL e retornam 200 OK idempotente.
+    """
+    _, doc_id, job_id = _create_pet_and_job(pet_tracker, pet_name="Simba")
+
+    payload = {
+        "status": "DONE",
+        "summary": "Resumo clínico concorrente.",
+    }
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+        async def call_complete():
+            return await async_client.post(f"/internal/jobs/{job_id}/complete", json=payload)
+
+        # Dispara 5 requisições de conclusão simultâneas no mesmo milissegundo
+        responses = await asyncio.gather(*[call_complete() for _ in range(5)])
+
+    # Todas devem responder 200 OK graças ao lock pessimista + idempotência
+    for resp in responses:
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "DONE"
+        assert resp.json()["document_status"] == "READY"
+
+    # Confirmação no PostgreSQL
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        assert job.status == "DONE"
+        doc = db.get(Document, doc_id)
+        assert doc.status == "READY"
+        assert doc.summary == "Resumo clínico concorrente."
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_complete_job_conflicting_statuses(pet_tracker) -> None:
+    """Valida que duas requisições concorrentes conflitantes (uma DONE e outra FAILED)
+    são serializadas pelo Lock Pessimista: exatamente uma obtém 200 OK e a outra é rejeitada com 409 Conflict.
+    """
+    _, doc_id, job_id = _create_pet_and_job(pet_tracker, pet_name="Thor")
+
+    payload_done = {"status": "DONE", "summary": "Sucesso."}
+    payload_failed = {"status": "FAILED", "error": "Falha concorrente."}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+        resp_a, resp_b = await asyncio.gather(
+            async_client.post(f"/internal/jobs/{job_id}/complete", json=payload_done),
+            async_client.post(f"/internal/jobs/{job_id}/complete", json=payload_failed),
+        )
+
+    status_codes = sorted([resp_a.status_code, resp_b.status_code])
+    assert status_codes == [200, 409]
+
+    # Verifica qual ganhou o lock e se o banco reflete coerência absoluta
+    winner_resp = resp_a if resp_a.status_code == 200 else resp_b
+    loser_resp = resp_b if resp_a.status_code == 200 else resp_a
+
+    assert "já finalizado" in loser_resp.json()["detail"].lower()
+
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        doc = db.get(Document, doc_id)
+        assert job.status == winner_resp.json()["status"]
+        assert doc.status == winner_resp.json()["document_status"]
+    finally:
+        db.close()
+
